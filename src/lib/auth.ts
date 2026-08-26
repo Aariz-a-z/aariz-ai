@@ -211,10 +211,25 @@ export async function signIn(email: unknown, password: unknown): Promise<AuthSes
   const credentials = validateCredentials(email, password);
   const { data, error } = await createAnonClient().auth.signInWithPassword(credentials);
 
-  // Deliberately one message for both "no such account" and "wrong password".
-  // Distinguishing them turns the sign-in form into an account enumerator.
+  /**
+   * Still ONE message for every cause. Distinguishing "no such account" from
+   * "wrong password" turns the sign-in form into an account enumerator, and
+   * that property is unchanged here.
+   *
+   * What is added is the third cause, which was previously invisible and is
+   * the one people actually hit: when a Supabase project has "Confirm email"
+   * enabled, an unconfirmed account is refused with the same generic error as
+   * a wrong password. A user who typed their password correctly was told it
+   * was wrong, with nothing to act on. Naming the possibility costs no
+   * enumeration — it applies equally whether or not the account exists.
+   */
   if (error || !data.session) {
-    throw new AuthError('rejected', 'Incorrect email or password.', 401);
+    throw new AuthError(
+      'rejected',
+      'Incorrect email or password — or the address has not been confirmed yet. ' +
+        'If you have just signed up, check your inbox for a confirmation link.',
+      401,
+    );
   }
 
   return {

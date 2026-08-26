@@ -163,7 +163,18 @@ export function AuthPanel({ state, onChanged }: AuthPanelProps) {
           </div>
 
           {error !== null && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
-          {notice !== null && <p className="text-xs text-emerald-700 dark:text-emerald-400">{notice}</p>}
+          {/*
+            Deliberately louder than the error beside it. This is the one
+            message a new user MUST act on — an unconfirmed account fails
+            sign-in with a generic "incorrect password", so a confirmation
+            notice that reads as a quiet aside sends people into a loop of
+            retyping a password that was always correct.
+          */}
+          {notice !== null && (
+            <p className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-900 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+              {notice}
+            </p>
+          )}
         </form>
       )}
     </div>
