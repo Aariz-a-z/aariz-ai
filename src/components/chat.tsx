@@ -10,7 +10,12 @@ import { DocumentPanel } from '@/components/document-panel';
 import { ErrorBanner } from '@/components/error-banner';
 import { MessageList } from '@/components/message-list';
 import { fetchAuthState, type AuthState } from '@/lib/auth-client';
-import { listDocuments as listDocumentsRequest, type UserDocument } from '@/lib/documents-client';
+import {
+  MAX_UPLOAD_BYTES,
+  listDocuments as listDocumentsRequest,
+  uploadDocument,
+  type UserDocument,
+} from '@/lib/documents-client';
 import { streamReply } from '@/lib/chat-transport';
 import {
   deleteConversation as deleteConversationRequest,
@@ -74,6 +79,9 @@ export function Chat({ inferenceDisabled = false }: ChatProps) {
 
   /** The signed-in user's uploads. Null while anonymous — there is no library. */
   const [documents, setDocuments] = useState<UserDocument[] | null>(null);
+  const [isUploading, setUploading] = useState(false);
+  /** Transient confirmation that a document finished indexing. */
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const lastPromptRef = useRef<string>('');
@@ -356,6 +364,60 @@ export function Chat({ inferenceDisabled = false }: ChatProps) {
     [selectConversation],
   );
 
+  /**
+   * Attach a document from the composer.
+   *
+   * Deliberately the SAME `uploadDocument` the sidebar panel calls, not a
+   * parallel implementation — one upload path means one place where auth,
+   * size limits and error handling can be got right, and the panel's list
+   * refreshes from the same `reloadKey` afterwards.
+   *
+   * Size is checked here as well as on the server. The server check is the
+   * real one; this exists so a 12 MB file fails instantly instead of after a
+   * long upload that was always going to be refused.
+   */
+  const handleAttach = useCallback((file: File) => {
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setError(
+        `"${file.name}" is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`,
+      );
+      setStatus('error');
+      return;
+    }
+
+    setUploading(true);
+    setUploadNotice(null);
+    setError(null);
+
+    void uploadDocument(file)
+      .then((document) => {
+        // "Indexed" rather than "uploaded": the request only returns once
+        // extraction, chunking and embedding have finished, so by this point
+        // the document really is searchable.
+        setUploadNotice(`"${document.title}" is indexed and ready to ask about.`);
+        setReloadKey((key) => key + 1);
+      })
+      .catch((caught: unknown) => {
+        setError(caught instanceof Error ? caught.message : 'Could not upload that file.');
+        setStatus('error');
+      })
+      .finally(() => setUploading(false));
+  }, []);
+
+  /**
+   * Why the attach button cannot be used, or null when it can.
+   *
+   * Upload is owner-scoped: a document belongs to an account, so there is
+   * nothing to attach it to when signed out. Saying that is far better than a
+   * greyed-out button with no explanation.
+   */
+  const attachDisabledReason =
+    inferenceDisabled
+      ? 'Document upload is unavailable on the public demo. Run AARIZ AI locally to index your own files.'
+      : !authState.authenticated
+        ? 'Sign in to upload documents — they are stored against your account and only you can search them.'
+        : null;
+
   return (
     <div className="flex h-full bg-white dark:bg-zinc-950">
       <ConversationSidebar
@@ -444,11 +506,33 @@ export function Chat({ inferenceDisabled = false }: ChatProps) {
           </div>
         )}
 
+        {uploadNotice !== null && (
+          <div className="mx-auto w-full max-w-3xl px-4 pb-2">
+            <p
+              role="status"
+              className="flex items-start justify-between gap-3 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-200"
+            >
+              <span>{uploadNotice}</span>
+              <button
+                type="button"
+                onClick={() => setUploadNotice(null)}
+                aria-label="Dismiss"
+                className="shrink-0 text-emerald-700 hover:text-emerald-900 dark:text-emerald-400 dark:hover:text-emerald-200"
+              >
+                ×
+              </button>
+            </p>
+          </div>
+        )}
+
         <div className={inferenceDisabled ? 'pointer-events-none opacity-50' : undefined}>
           <ChatComposer
             onSubmit={handleSubmit}
             onStop={handleStop}
             isStreaming={status === 'streaming'}
+            onAttach={handleAttach}
+            isUploading={isUploading}
+            attachDisabledReason={attachDisabledReason}
           />
         </div>
       </div>

@@ -9,14 +9,15 @@
  * DIMENSION IS THE WHOLE RISK
  * ---------------------------
  * `chunks.embedding` is `vector(768)`, and that number appears in both search
- * RPCs' signatures. The default model here is `text-embedding-004`, which
- * returns 768 natively, so the existing schema is preserved with no migration.
+ * RPCs' signatures. Every embedding model currently reachable returns 3072 by
+ * default, so this adapter ALWAYS requests `outputDimensionality: 768`. The
+ * schema is preserved with no migration; the truncation happens upstream.
  *
- * `gemini-embedding-001` returns 3072 by default and would be rejected. It can
- * be used by setting `GEMINI_EMBED_DIMENSIONS=768`, which asks the API to
- * truncate. That is opt-in rather than automatic: sending an unsupported field
- * to a model that does not accept it is an error, and guessing which models do
- * would be exactly the kind of assumption this project avoids.
+ * That default was set by calling the API, not by reading about it. The
+ * documented `text-embedding-004` — which does return 768 natively — is no
+ * longer available: ListModels offers only `gemini-embedding-001`,
+ * `gemini-embedding-2-preview` and `gemini-embedding-2`, and asking for the
+ * documented one returns 404.
  *
  * Whatever comes back, the factory above checks its width against
  * `EMBEDDING_DIMENSION` and refuses a mismatch — so a wrong model produces a
@@ -31,6 +32,7 @@
  * refuse a half-migrated index on its own.
  */
 
+import { EMBEDDING_DIMENSION } from '../../types/database.ts';
 import {
   EmbeddingError,
   type BatchResult,
@@ -39,8 +41,19 @@ import {
   type EmbeddingProvider,
 } from './types.ts';
 
-/** 768 natively, which is what the schema already expects. */
-const DEFAULT_MODEL = 'text-embedding-004';
+/**
+ * Verified against a real key rather than taken from documentation.
+ *
+ * `text-embedding-004` is documented widely and is NOT available: a live
+ * ListModels call returned only `gemini-embedding-001`,
+ * `gemini-embedding-2-preview` and `gemini-embedding-2`. Asking for the
+ * documented model produced a 404, which is precisely the class of error no
+ * amount of reading could have caught.
+ *
+ * `gemini-embedding-001` returns 3072 dimensions by default, so it MUST be
+ * asked to truncate — see `outputDimensionality` below.
+ */
+const DEFAULT_MODEL = 'gemini-embedding-001';
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
@@ -67,14 +80,19 @@ export function getGeminiEmbedModel(): string {
 }
 
 /**
- * Optional truncation width for models that support it.
+ * Truncation width, defaulting to the schema's own dimension.
  *
- * Returns null when unset, and the field is then omitted entirely rather than
- * sent as a default.
+ * This defaults to 768 rather than being omitted, and that changed once the
+ * API was actually called. Every embedding model this key can reach is a
+ * `gemini-embedding-*` model returning 3072 by default — which the factory
+ * would reject against a `vector(768)` column. Omitting the field would make
+ * the out-of-the-box configuration fail on its first upload.
+ *
+ * Set explicitly only to override. All currently available models accept it.
  */
-function outputDimensionality(): number | null {
+function outputDimensionality(): number {
   const raw = process.env.GEMINI_EMBED_DIMENSIONS?.trim();
-  if (!raw) return null;
+  if (!raw) return EMBEDDING_DIMENSION;
 
   const parsed = Number(raw);
   if (!Number.isInteger(parsed) || parsed < 1) {
@@ -165,7 +183,7 @@ export function createGeminiEmbeddingProvider(): EmbeddingProvider {
           model: `models/${model}`,
           content: { parts: [{ text }] },
           taskType: taskType(task),
-          ...(dimensions !== null ? { outputDimensionality: dimensions } : {}),
+          outputDimensionality: dimensions,
         })),
       };
 

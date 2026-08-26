@@ -20,11 +20,16 @@
  *   node --experimental-strip-types scripts/verify-documents.ts
  */
 
+import { readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { crc32 } from 'node:zlib';
 
 import { signIn } from '../src/lib/auth.ts';
 import { createAuthedClient, isAuthConfigured } from '../src/lib/supabase/authed.ts';
 import { getSupabaseAdminClient, isSupabaseConfigured } from '../src/lib/supabase/server.ts';
+import { SUPPORTED_EXTENSIONS } from '../src/lib/ingest/extract.ts';
+import { isInferenceDisabled } from '../src/lib/inference-mode.ts';
 import { loadEnvLocal } from './_env.ts';
 
 let passed = 0;
@@ -260,6 +265,103 @@ class Client {
       }
     }
     return { answer, sources };
+  }
+}
+
+/**
+ * The UI half of document upload.
+ *
+ * Everything else in this suite proves the API and the isolation model. None
+ * of it proves a user can actually REACH any of it — and for a long time they
+ * could not: the upload control existed only inside the collapsible sidebar,
+ * and the file picker offered three of the six formats the backend accepts, so
+ * a Markdown file could not even be selected. Both faults are invisible to an
+ * API-level test, which is exactly why these checks exist.
+ */
+function verifyUploadUi(): void {
+  const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  const read = (...parts: string[]): string => readFileSync(join(ROOT, ...parts), 'utf8');
+  const strip = (source: string): string =>
+    source
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n')
+      .map((line) => line.replace(/\/\/.*$/, ''))
+      .join('\n');
+
+  console.log('\n-- The upload control is reachable from the chat UI ----------------');
+
+  const composer = strip(read('src', 'components', 'chat-composer.tsx'));
+  const chat = strip(read('src', 'components', 'chat.tsx'));
+  const client = read('src', 'lib', 'documents-client.ts');
+
+  check(/onAttach/.test(composer), 'the composer accepts an attach handler');
+  check(/type="file"/.test(composer), '  and renders a real file input');
+  check(/Attach a document/.test(composer), '  with an accessible label');
+  check(/isUploading/.test(composer), '  and shows a busy state while indexing');
+  check(/attachDisabledReason/.test(composer), '  and explains WHY when it cannot be used');
+
+  check(/onAttach=\{handleAttach\}/.test(chat), 'the chat wires the handler in');
+  check(/uploadDocument/.test(chat), '  reusing the existing upload client');
+  check(
+    !/fetch\(['"`]\/api\/documents/.test(chat),
+    '  rather than a second upload path of its own',
+  );
+  check(/uploadNotice/.test(chat), '  and confirms when a document is indexed');
+  check(/DocumentPanel/.test(chat), 'the document library is still rendered');
+  check(
+    /Sign in to upload documents/.test(chat),
+    'a signed-out user is told to sign in rather than shown a dead control',
+  );
+
+  console.log('\n-- The picker offers exactly what the backend accepts ---------------');
+
+  const accepted = (client.match(/ACCEPTED_EXTENSIONS = \[([^\]]*)\]/)?.[1] ?? '')
+    .split(',')
+    .map((entry) => entry.trim().replace(/['"]/g, ''))
+    .filter((entry) => entry.length > 0);
+
+  check(accepted.length > 0, 'the client declares an accept list', accepted.join(' '));
+  for (const extension of SUPPORTED_EXTENSIONS) {
+    check(accepted.includes(extension), `  the picker offers ${extension}, which the backend supports`);
+  }
+  for (const offered of accepted) {
+    check(
+      SUPPORTED_EXTENSIONS.includes(offered),
+      `  it offers nothing the backend would reject (${offered})`,
+    );
+  }
+
+  const panel = strip(read('src', 'components', 'document-panel.tsx'));
+  check(
+    /accept=\{ACCEPT_ATTRIBUTE\}/.test(panel),
+    'the sidebar panel uses the same shared list, so the two cannot drift',
+  );
+
+  console.log('\n-- Upload is enabled in Gemini production mode ----------------------');
+
+  const saved = process.env.LLM_PROVIDER;
+  try {
+    process.env.LLM_PROVIDER = 'gemini';
+    check(!isInferenceDisabled(), 'LLM_PROVIDER=gemini does NOT disable the documents route');
+    process.env.LLM_PROVIDER = 'ollama';
+    check(!isInferenceDisabled(), 'LLM_PROVIDER=ollama does not disable it either');
+    process.env.LLM_PROVIDER = 'disabled';
+    check(isInferenceDisabled(), 'only LLM_PROVIDER=disabled turns it off (the A3 demo)');
+  } finally {
+    if (saved === undefined) delete process.env.LLM_PROVIDER;
+    else process.env.LLM_PROVIDER = saved;
+  }
+
+  console.log('\n-- No secret reaches the upload UI ----------------------------------');
+  for (const [label, needle] of [
+    ['a service-role reference', 'SERVICE_ROLE'],
+    ['a Gemini key reference', 'GEMINI_API_KEY'],
+    ['an Ollama address', '11434'],
+  ] as const) {
+    check(
+      !composer.includes(needle) && !chat.includes(needle) && !client.includes(needle),
+      `the upload UI contains no ${label}`.replace('no a', 'no').replace('no an', 'no'),
+    );
   }
 }
 
@@ -560,6 +662,8 @@ async function main(): Promise<void> {
       `     database holds ${docs} document(s), ${chunks} chunk(s), ${convos} conversation(s) not created by this run (untouched)`,
     );
   }
+
+  verifyUploadUi();
 
   summary();
 }

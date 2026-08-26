@@ -31,6 +31,35 @@ async function readError(response: Response, fallback: string): Promise<string> 
 }
 
 /** Returns null when the caller is not signed in, so the UI can hide the panel. */
+/**
+ * Extensions the picker offers.
+ *
+ * Kept deliberately in step with `SUPPORTED_EXTENSIONS` in
+ * `src/lib/ingest/extract.ts`. It is duplicated rather than imported because
+ * that module pulls in `node:fs` and cannot be loaded in a browser — but a
+ * narrower list here is worse than a duplicate: it silently makes a supported
+ * format unselectable, and the user has no way to discover that the backend
+ * would in fact have accepted it. `.md` and `.html` were missing for exactly
+ * that reason.
+ */
+export const ACCEPTED_EXTENSIONS = [
+  '.md',
+  '.markdown',
+  '.mdx',
+  '.txt',
+  '.text',
+  '.pdf',
+  '.html',
+  '.htm',
+  '.docx',
+] as const;
+
+/** For a file input's `accept` attribute. */
+export const ACCEPT_ATTRIBUTE = ACCEPTED_EXTENSIONS.join(',');
+
+/** Mirrors MAX_UPLOAD_BYTES server-side, so the UI can refuse early. */
+export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
 export async function listDocuments(signal?: AbortSignal): Promise<UserDocument[] | null> {
   const response = await fetch('/api/documents', { credentials: 'same-origin', signal });
   if (response.status === 401) return null;

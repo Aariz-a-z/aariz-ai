@@ -260,7 +260,11 @@ async function main(): Promise<void> {
    * status code. Without the mode the failure must be the missing key; the
    * zero-API check must not appear at all.
    */
-  await withServer({ ZERO_API_MODE: 'false', LLM_PROVIDER: 'gemini' }, async (port, output) => {
+  // The key is blanked so this fails on configuration rather than reaching
+  // Google — the control is about WHICH check fired, not about the network.
+  await withServer(
+    { ZERO_API_MODE: 'false', LLM_PROVIDER: 'gemini', GEMINI_API_KEY: '   ' },
+    async (port, output) => {
     const outcome = await ask(port);
     check(
       outcome.status === 500,
@@ -273,10 +277,11 @@ async function main(): Promise<void> {
     );
     check(
       /GEMINI_API_KEY is not set/.test(output()),
-      '  it failed on the missing key instead — so the 500 above WAS the mode',
-    );
-    return null;
-  });
+        '  it failed on the missing key instead — so the 500 above WAS the mode',
+      );
+      return null;
+    },
+  );
 
   await withServer({ ZERO_API_MODE: 'true' }, async (port) => {
     const outcome = await ask(port);

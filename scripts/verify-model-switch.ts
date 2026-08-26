@@ -439,7 +439,10 @@ async function main(): Promise<void> {
    */
   await withServer(
     PORT_A,
-    { LLM_PROVIDER: 'gemini', ZERO_API_MODE: 'false', GEMINI_API_KEY: undefined },
+    // Whitespace, not deletion: removing it lets .env.local supply the key
+    // again, and '' is treated as absent and refilled. '   ' survives both and
+    // trims to empty — the same technique the OLLAMA_MODEL case uses.
+    { LLM_PROVIDER: 'gemini', ZERO_API_MODE: 'false', GEMINI_API_KEY: '   ' },
     async (server) => {
       const outcome = await ask(server.port, 'hello', 30_000);
       check(

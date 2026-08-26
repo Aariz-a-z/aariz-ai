@@ -32,14 +32,35 @@ import { LlmError, type LlmMessage, type LlmProvider, type LlmStreamOptions } fr
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
 /**
- * Default model.
+ * Default model, verified against a real key rather than documentation.
  *
- * `gemini-2.0-flash` is chosen for being the cheapest capable tier with a free
- * allowance — this project's premise is that a reader can run it without a
- * bill, and a default that quietly costs money would break that. Override with
- * `GEMINI_MODEL`.
+ * Two documented defaults were tried and both failed against a live key.
+ * `gemini-2.0-flash` does not exist; `gemini-2.5-flash` returned 404 with the
+ * API's own instruction:
+ *
+ *     "This model models/gemini-2.5-flash is no longer available to new
+ *      users. Please update your code to use models/gemini-3.6-flash"
+ *
+ * So this default is the one Google names, confirmed working. Google retires
+ * model ids, and a documented default is a guess until something calls the
+ * API — expect to revisit this.
+ *
+ * THINKING TOKENS COME OUT OF THE SAME BUDGET
+ * -------------------------------------------
+ * Gemini 3.x models reason internally before answering, and those tokens are
+ * charged against `maxOutputTokens`. Measured on a six-token prompt: 69
+ * thinking tokens before any text. With too small a ceiling the response comes
+ * back `finishReason: MAX_TOKENS` with EMPTY content — an answer that silently
+ * is not there.
+ *
+ * The Level 14 ceilings (384 anonymous / 512 authenticated) were verified to
+ * leave room. They are not raised here: that is a cost control, and changing
+ * it is the operator's call, not this adapter's.
+ *
+ * `thinkingConfig: { thinkingBudget: 0 }` does NOT work — this model rejects
+ * it with 400 — so thinking cannot be switched off to reclaim the budget.
  */
-const DEFAULT_MODEL = 'gemini-2.0-flash';
+const DEFAULT_MODEL = 'gemini-3.6-flash';
 
 /**
  * Shorter than the 120 s Ollama budget, deliberately.

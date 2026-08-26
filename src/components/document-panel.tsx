@@ -16,6 +16,7 @@
 import { useRef, useState } from 'react';
 
 import {
+  ACCEPT_ATTRIBUTE,
   deleteDocument,
   formatBytes,
   uploadDocument,
@@ -75,7 +76,7 @@ export function DocumentPanel({ documents, onChanged }: DocumentPanelProps) {
       <input
         ref={inputRef}
         type="file"
-        accept=".pdf,.docx,.txt"
+        accept={ACCEPT_ATTRIBUTE}
         disabled={busy}
         onChange={(event) => handleFile(event.target.files?.[0])}
         aria-label="Upload a document"
