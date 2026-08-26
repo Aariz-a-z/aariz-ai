@@ -11,6 +11,7 @@
  * immediate, obvious failure rather than a silent `undefined`.
  */
 
+import { createGeminiProvider, getGeminiModel } from '@/lib/llm/gemini';
 import { createOllamaProvider } from '@/lib/llm/ollama';
 import {
   DISABLED_PROVIDER,
@@ -101,17 +102,31 @@ export function getLlmProvider(): LlmProvider {
     case DISABLED_PROVIDER:
       throw new LlmError('not_implemented', INFERENCE_DISABLED_MESSAGE, 503);
 
-    case 'gemini':
-      throw new LlmError(
-        'not_implemented',
-        'LLM_PROVIDER=gemini is not implemented. The default architecture is self-hosted.',
-        501,
-      );
+    /**
+     * Google Gemini — the production provider for a hosted deployment.
+     *
+     * Reached only when explicitly configured. It is never a fallback from
+     * Ollama: a silent switch would mean a deployment that quietly started
+     * sending private documents to a third party because a local server was
+     * down, which is the opposite of a safe default.
+     */
+    case 'gemini': {
+      const apiKey = process.env.GEMINI_API_KEY?.trim();
+      if (!apiKey) {
+        // Names the variable, never a value — and there is no value to name.
+        throw new LlmError(
+          'invalid_configuration',
+          'GEMINI_API_KEY is not set. Add it to the server environment.',
+          500,
+        );
+      }
+      return createGeminiProvider({ apiKey, model: getGeminiModel() });
+    }
 
     default:
       throw new LlmError(
         'invalid_configuration',
-        `Unknown LLM_PROVIDER "${providerId}". Supported: ollama, disabled.`,
+        `Unknown LLM_PROVIDER "${providerId}". Supported: ollama, gemini, disabled.`,
         500,
       );
   }

@@ -77,7 +77,7 @@ async function identify(port: number): Promise<string | null> {
 
 async function withServer<T>(
   overlay: Record<string, string>,
-  body: (port: number) => Promise<T>,
+  body: (port: number, output: () => string) => Promise<T>,
 ): Promise<T | null> {
   const child: ChildProcess = spawn('npx', ['next', 'start', '--port', String(PORT)], {
     cwd: ROOT,
@@ -85,8 +85,12 @@ async function withServer<T>(
     shell: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  child.stdout?.resume();
-  child.stderr?.resume();
+  // Captured rather than discarded: the control below discriminates on the
+  // REASON the server logged, which is the only place the two failure paths
+  // differ — both are a deliberately indistinguishable 500 to the caller.
+  let buffer = '';
+  child.stdout?.on('data', (chunk: Buffer) => (buffer += chunk.toString()));
+  child.stderr?.on('data', (chunk: Buffer) => (buffer += chunk.toString()));
 
   const stop = (): Promise<void> =>
     new Promise((done) => {
@@ -108,7 +112,7 @@ async function withServer<T>(
       block(`server did not start with ${JSON.stringify(overlay)}`, problem);
       return null;
     }
-    return await body(PORT);
+    return await body(PORT, () => buffer);
   } finally {
     await stop();
   }
@@ -224,7 +228,7 @@ async function main(): Promise<void> {
   // =========================================================================
   console.log('\n-- Enforcement: the mode actually refuses a cloud provider ---------');
 
-  await withServer({ ZERO_API_MODE: 'true', LLM_PROVIDER: 'gemini' }, async (port) => {
+  await withServer({ ZERO_API_MODE: 'true', LLM_PROVIDER: 'gemini' }, async (port, output) => {
     const outcome = await ask(port);
     check(
       outcome.status === 500,
@@ -236,20 +240,40 @@ async function main(): Promise<void> {
       '  and the public message names no credential or endpoint',
       outcome.error ?? '(none)',
     );
+    check(
+      /ZERO_API_MODE is enabled/.test(output()),
+      '  and the LOG shows the refusal came from the zero-API check',
+    );
     return null;
   });
 
   /**
-   * The control. Without the mode, the same provider fails for its OWN reason
-   * — 501 not_implemented — which is what shows the 500 above came from the
-   * zero-API check rather than from gemini being unimplemented anyway.
+   * The control, rewritten because Gemini is now implemented.
+   *
+   * It used to rely on gemini returning 501 `not_implemented` without the
+   * mode, so that a 500 with the mode proved the zero-API check had fired.
+   * There is a real adapter now: both paths return 500, and the status alone
+   * no longer discriminates.
+   *
+   * So the control discriminates on the LOGGED reason instead, which is
+   * stronger — it names the actual mechanism rather than inferring it from a
+   * status code. Without the mode the failure must be the missing key; the
+   * zero-API check must not appear at all.
    */
-  await withServer({ ZERO_API_MODE: 'false', LLM_PROVIDER: 'gemini' }, async (port) => {
+  await withServer({ ZERO_API_MODE: 'false', LLM_PROVIDER: 'gemini' }, async (port, output) => {
     const outcome = await ask(port);
     check(
-      outcome.status === 501,
-      'CONTROL: without the mode, gemini fails as not_implemented (501), not as a mode violation',
+      outcome.status === 500,
+      'CONTROL: without the mode, gemini still fails — for a different reason',
       `HTTP ${outcome.status}`,
+    );
+    check(
+      !/ZERO_API_MODE is enabled/.test(output()),
+      '  and the zero-API check did NOT fire',
+    );
+    check(
+      /GEMINI_API_KEY is not set/.test(output()),
+      '  it failed on the missing key instead — so the 500 above WAS the mode',
     );
     return null;
   });

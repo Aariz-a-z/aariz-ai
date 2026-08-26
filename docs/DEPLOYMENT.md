@@ -106,8 +106,10 @@ to your own machine, or a VPS running Ollama.
 
 `LLM_PROVIDER=gemini`, with inference from a hosted provider.
 
-**This is not possible today.** [`src/lib/llm.ts:65`](../src/lib/llm.ts) throws
-`not_implemented` with HTTP 501:
+**Implemented as of Mode C below.** `LLM_PROVIDER=gemini` now selects Gemini
+for generation *and* embeddings. What follows described the state before that
+and is kept for the reasoning about cost and embedding dimension, which still
+applies:
 
 > `LLM_PROVIDER=gemini is not implemented. The default architecture is self-hosted.`
 
@@ -528,6 +530,147 @@ read per request.
 Supabase's free tier **pauses a project after about a week of inactivity**. A
 paused project shows `database: "unavailable"` and fails sign-in. That is fine
 for a demo you open deliberately; it is not a service that stays up unattended.
+
+---
+
+## Mode C — Vercel + Gemini (a working public deployment)
+
+Modes A and B assume the model runs on hardware you control. This one does not:
+generation and embeddings both go to Google's API, so the deployment needs no
+machine of yours to be awake, and **Ollama is not required in production**.
+
+```
+Browser
+   ↓
+Vercel / Next.js            ← the whole application
+   ↓
+Supabase                    ← auth, Postgres, pgvector
+   ↓
+Google Gemini API           ← generation AND embeddings
+```
+
+Local development is unchanged: `LLM_PROVIDER=ollama` still uses Ollama for
+both, and nothing about that path was modified.
+
+### One switch selects both
+
+`LLM_PROVIDER=gemini` changes generation *and* embeddings together. There is
+deliberately no second variable: two would permit Gemini generation with Ollama
+embeddings — a combination that works on a laptop, cannot work on Vercel, and
+would fail at the first upload rather than at startup.
+
+### Embedding dimension: 768, and no migration
+
+`chunks.embedding` is `vector(768)`, and that width appears in both search
+RPCs. `text-embedding-004` returns 768 **natively**, so the schema, the RPCs
+and the HNSW indexes are untouched.
+
+`gemini-embedding-001` returns 3072 and is **refused** by the dimension check in
+`src/lib/embeddings.ts` before anything reaches the database. To use it, also
+set `GEMINI_EMBED_DIMENSIONS=768` to request truncation.
+
+### ⚠ Switching providers on a populated corpus requires re-ingestion
+
+**Same width is not the same vector space.** A Gemini vector and a nomic vector
+of equal length are not comparable — cosine similarity between them is
+meaningless, and a half-migrated index returns confident nonsense.
+
+If documents already exist when you switch, re-embed them:
+
+```bash
+npm run reingest -- --status
+npm run reingest -- --build      # embeds every chunk with the NEW provider
+npm run reingest -- --validate
+npm run reingest -- --promote    # one transaction; no downtime
+npm run reingest -- --cleanup
+```
+
+The live index keeps answering from the old vectors throughout, and
+`promote_reindex` refuses a mixed-provider staging set on its own — the
+per-row model guard catches it without you having to notice.
+
+With an empty corpus there is nothing to do.
+
+### Free-tier safety
+
+Two independent layers, both preserved:
+
+| Layer | Scope | Purpose |
+|---|---|---|
+| **Level 14** (unchanged) | per caller / per site | stops one person monopolising the service |
+| **Gemini budget** (new) | the whole application | stops everyone *collectively* exhausting the quota |
+
+`GEMINI_REQUESTS_PER_HOUR` / `GEMINI_REQUESTS_PER_DAY` count **embedding as well
+as generation** — one upload can be dozens of embedding calls, so a budget
+watching only chat would miss the larger spender. Exhaustion returns **429**
+with a friendly message that names no provider or quota, and **nothing retries**:
+retrying a rate-limit response is how a small overrun becomes a large one.
+
+**Serverless caveat, stated plainly:** these counters live in the process. On
+one long-lived server the budget is a true global cap. On Vercel each instance
+keeps its own, so the effective ceiling is roughly the configured number times
+the warm instance count. It genuinely bounds a hot instance; it is not an
+account-wide guarantee. Google's own quota is the final backstop, and you should
+set a billing alert rather than rely on this alone.
+
+**This is not a promise of $0.** It is designed to run within the free tiers of
+Vercel, Supabase and Gemini, subject to their quotas and to changes in them.
+
+### Privacy — the trade this mode makes
+
+In Mode B nothing leaves your machine. In Mode C **every question and every
+uploaded document is sent to Google**, and the Gemini free tier generally
+permits Google to use submitted data to improve its products. That is the
+opposite of the project's self-hosted premise and of Level 20's
+`ZERO_API_MODE`. It is a legitimate choice for a public demo; it should be a
+knowing one, and users should be told if they are uploading anything sensitive.
+
+### Vercel environment variables
+
+Dashboard → Settings → Environment Variables. **All server-only. Never
+`NEXT_PUBLIC_`.**
+
+| Variable | Value |
+|---|---|
+| `LLM_PROVIDER` | `gemini` |
+| `GEMINI_API_KEY` | your key from aistudio.google.com/apikey |
+| `GEMINI_MODEL` | `gemini-2.0-flash` |
+| `GEMINI_EMBED_MODEL` | `text-embedding-004` |
+| `GEMINI_REQUESTS_PER_HOUR` / `_PER_DAY` | e.g. `100` / `500` |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY` | as in `.env.example` |
+| `ADMIN_EMAILS` | your address, or `/admin` 404s for everyone |
+| `WIDGET_ALLOWED_ORIGINS` | your Vercel origin — **set before the build** |
+
+**Do not set on Vercel:**
+
+- `OLLAMA_BASE_URL`, `OLLAMA_MODEL` — unreachable from a serverless container
+- **`ZERO_API_MODE`** — it enforces *local-only* inference and will **reject
+  Gemini with a 500**. Leave it unset in production; keep `true` locally.
+
+### Redeploy after changing environment variables
+
+`WIDGET_ALLOWED_ORIGINS` is baked into the routes manifest at build time, so it
+needs a **redeploy**, not a restart. Every other variable is read per request,
+but Vercel applies environment changes to new deployments — trigger one after
+editing any of them.
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `health.llm: "unavailable"` in Gemini mode | key missing, rejected, or over quota | check `GEMINI_API_KEY`; the reason is in the server log, never in the response |
+| Chat returns 500, log says `invalid_configuration` | `ZERO_API_MODE` is set in production | unset it — it forbids non-local providers |
+| Chat returns 500 mentioning `GEMINI_API_KEY` | variable not set for the Production environment | add it, then redeploy |
+| Everything 429s | the global Gemini budget is spent | wait for the window, or raise `GEMINI_REQUESTS_PER_*` knowingly |
+| Retrieval returns nonsense after switching providers | nomic and Gemini vectors mixed | run the re-ingestion cycle above |
+| Upload fails with `dimension_mismatch` | embedding model returns ≠ 768 | use `text-embedding-004`, or set `GEMINI_EMBED_DIMENSIONS=768` |
+
+### Keeping Ollama for local development
+
+Nothing to undo. `.env.local` keeps `LLM_PROVIDER=ollama`, `OLLAMA_BASE_URL`,
+`OLLAMA_MODEL`, `OLLAMA_EMBED_MODEL` and `ZERO_API_MODE=true`; `.env.local` is
+git-ignored and never reaches Vercel. The two configurations coexist because
+the provider is chosen at runtime from the environment, not compiled in.
 
 ---
 

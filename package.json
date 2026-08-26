@@ -32,6 +32,7 @@
     "verify:offline": "node --experimental-strip-types scripts/verify-offline.ts",
     "verify:reingest": "node --experimental-strip-types scripts/verify-reingest.ts",
     "verify:deployment": "node --experimental-strip-types scripts/verify-deployment.ts",
+    "verify:gemini": "node --experimental-strip-types scripts/verify-gemini.ts",
     "demo": "node --experimental-strip-types scripts/demo-server.ts"
   },
   "dependencies": {

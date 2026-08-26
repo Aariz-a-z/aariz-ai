@@ -37,6 +37,7 @@ import {
   enforceRateLimit,
   generationTokenLimit,
   concurrencySnapshot,
+  enforceGeminiBudget,
   getRateLimitConfig,
   tooManyRequests,
   widgetIdentity,
@@ -459,6 +460,18 @@ export async function POST(request: Request): Promise<Response> {
       ? enforceRateLimit(request, 'widget', null, rateConfig, widgetIdentity(widgetOrigin))
       : enforceRateLimit(request, 'chat', rateLimitUserId, rateConfig);
   if (throttled !== null) return throttled;
+
+  /**
+   * The GLOBAL provider budget, checked after the per-caller one.
+   *
+   * Order matters. The per-caller limit answers "is this person asking too
+   * much"; this answers "has the application as a whole spent enough today".
+   * Checking the caller first means one heavy user is refused on their own
+   * account rather than being allowed to eat into the shared budget and have
+   * everyone else refused instead. A no-op unless the provider is metered.
+   */
+  const overBudget = enforceGeminiBudget(rateConfig);
+  if (overBudget !== null) return overBudget;
 
   // A slot is held for the whole span that occupies the CPU — retrieval,
   // summarisation and generation alike, since all three call the local model.

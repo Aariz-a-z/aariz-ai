@@ -15,7 +15,13 @@
 
 import { getServerUser } from '@/lib/auth';
 import { INFERENCE_DISABLED_MESSAGE, isInferenceDisabled } from '@/lib/inference-mode';
-import { acquireSlot, checkBodySize, enforceRateLimit, tooManyRequests } from '@/lib/rate-limit';
+import {
+  acquireSlot,
+  checkBodySize,
+  enforceGeminiBudget,
+  enforceRateLimit,
+  tooManyRequests,
+} from '@/lib/rate-limit';
 import { DocumentError, MAX_UPLOAD_BYTES, listDocuments, uploadDocument } from '@/lib/documents';
 import { enforceSameOrigin, rejectPreflight } from '@/lib/security-headers';
 import { log, newRequestId } from '@/lib/log';
@@ -90,6 +96,14 @@ export async function POST(request: Request): Promise<Response> {
 
   const throttled = enforceRateLimit(request, 'upload', user.id);
   if (throttled !== null) return throttled;
+
+  /**
+   * Ingestion spends provider quota too — one embedding call per chunk, so a
+   * single upload can cost far more than a chat turn. A budget that watched
+   * only generation would miss the larger consumer entirely.
+   */
+  const overBudget = enforceGeminiBudget();
+  if (overBudget !== null) return overBudget;
 
   let form: FormData;
   try {

@@ -88,6 +88,10 @@ export function isLocalProvider(providerId: string): boolean {
  * place nobody chose, and would silently disable chat for anyone who did wire
  * up a reachable endpoint on a hosted platform.
  */
+export function isGeminiProvider(): boolean {
+  return (process.env.LLM_PROVIDER ?? 'ollama').trim().toLowerCase() === 'gemini';
+}
+
 export function isInferenceDisabled(): boolean {
   return (process.env.LLM_PROVIDER ?? 'ollama').trim().toLowerCase() === DISABLED_PROVIDER;
 }

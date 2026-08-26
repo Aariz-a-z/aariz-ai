@@ -34,6 +34,7 @@
  * being tested is a code path that can be reached in production.
  */
 
+import { isGeminiProvider } from './inference-mode.ts';
 import { log } from './log.ts';
 
 /**
@@ -42,7 +43,7 @@ import { log } from './log.ts';
  * `widget` is Level 17 and is the one category NOT keyed to a caller — see
  * `widgetIdentity` below for why, and for what that costs.
  */
-export type LimitCategory = 'chat' | 'upload' | 'auth' | 'read' | 'widget';
+export type LimitCategory = 'chat' | 'upload' | 'auth' | 'read' | 'widget' | 'gemini';
 
 /**
  * Defaults, in requests per window.
@@ -133,6 +134,16 @@ export function getRateLimitConfig(): RateLimitConfig {
       read: {
         anonymous: readInt('RATE_LIMIT_READ_ANONYMOUS', DEFAULTS.read.anonymous),
         authenticated: readInt('RATE_LIMIT_READ_AUTHENTICATED', DEFAULTS.read.authenticated),
+      },
+      /**
+       * Present only to satisfy the Record. The Gemini budget is GLOBAL, not
+       * per-caller, so it is enforced by `enforceGeminiBudget` above and never
+       * looked up here. Zero would be a confusing value to leave reachable,
+       * so it mirrors the configured hourly ceiling.
+       */
+      gemini: {
+        anonymous: readInt('GEMINI_REQUESTS_PER_HOUR', DEFAULT_GEMINI_PER_HOUR),
+        authenticated: readInt('GEMINI_REQUESTS_PER_HOUR', DEFAULT_GEMINI_PER_HOUR),
       },
       // One variable, because a widget request is always anonymous.
       widget: {
@@ -238,6 +249,83 @@ export function consumeToken(key: string, capacity: number, windowSeconds: numbe
     limit: capacity,
     remaining: 0,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Gemini spend budget
+// ---------------------------------------------------------------------------
+
+/**
+ * A GLOBAL ceiling on calls to a metered provider, layered on top of the
+ * per-caller limits rather than replacing them.
+ *
+ * The two answer different questions and both are needed. The Level 14
+ * categories above stop ONE person monopolising the service; they cannot stop
+ * two hundred well-behaved visitors collectively exhausting a free-tier quota
+ * in an afternoon. This is the second bound: a fixed number of provider calls
+ * per hour and per day for the whole application, whoever is asking.
+ *
+ * It applies to EMBEDDING as well as generation, because document ingestion
+ * spends the same quota — a single upload can be dozens of embedding calls,
+ * and a budget that watched only chat would miss the larger consumer.
+ *
+ * WHAT IT CANNOT DO, STATED PLAINLY
+ * ---------------------------------
+ * The counters live in this process, like every other bucket here. On a
+ * single long-lived server that makes this a true global cap. On serverless
+ * each instance keeps its own, so the real ceiling is roughly the configured
+ * number times the number of warm instances. It genuinely bounds one hot
+ * instance and it is genuinely not an account-wide guarantee; only shared
+ * state would be, and that means Redis or a database write on every request.
+ * The provider's own quota remains the final backstop.
+ */
+const DEFAULT_GEMINI_PER_HOUR = 100;
+const DEFAULT_GEMINI_PER_DAY = 500;
+
+export interface GeminiBudget {
+  perHour: number;
+  perDay: number;
+}
+
+export function getGeminiBudget(): GeminiBudget {
+  return {
+    perHour: readInt('GEMINI_REQUESTS_PER_HOUR', DEFAULT_GEMINI_PER_HOUR),
+    perDay: readInt('GEMINI_REQUESTS_PER_DAY', DEFAULT_GEMINI_PER_DAY),
+  };
+}
+
+/**
+ * Spend one unit of the Gemini budget, or refuse.
+ *
+ * Returns a 429 to send, or null to continue. A no-op unless the configured
+ * provider is Gemini: a local Ollama has no quota to protect, and metering it
+ * would throttle development for no reason.
+ *
+ * Both windows are consumed rather than peeked, because the token bucket has
+ * no peek. When the hourly window passes and the daily one refuses, one hourly
+ * token has been spent without a request being made. That errs toward using
+ * LESS quota than configured, which is the correct direction for a control
+ * whose whole purpose is to avoid an overrun.
+ */
+export function enforceGeminiBudget(config: RateLimitConfig = getRateLimitConfig()): Response | null {
+  if (!config.enabled) return null;
+  if (!isGeminiProvider()) return null;
+
+  const { perHour, perDay } = getGeminiBudget();
+
+  const hourly = consumeToken('gemini:global:hour', perHour, 3_600);
+  if (!hourly.allowed) {
+    log.warn('gemini.budget_exhausted', { window: 'hour', limit: perHour });
+    return tooManyRequests('gemini', hourly.retryAfterSeconds);
+  }
+
+  const daily = consumeToken('gemini:global:day', perDay, 86_400);
+  if (!daily.allowed) {
+    log.warn('gemini.budget_exhausted', { window: 'day', limit: perDay });
+    return tooManyRequests('gemini', daily.retryAfterSeconds);
+  }
+
+  return null;
 }
 
 /** Testing helper: forget every bucket. Never called by application code. */
@@ -418,6 +506,11 @@ const FRIENDLY: Record<LimitCategory, string> = {
   // the budget is shared across the site's visitors — that would tell an
   // abusive visitor exactly what they had achieved.
   widget: 'This site has sent a lot of messages in a short time. Please try again shortly.',
+  // Deliberately says nothing about a provider, a quota or a budget. A visitor
+  // does not need to know which vendor is behind the assistant, and naming one
+  // invites probing for the limit.
+  gemini:
+    'You have reached the current usage limit. Please try again later.',
 };
 
 /**

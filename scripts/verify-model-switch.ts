@@ -424,34 +424,47 @@ async function main(): Promise<void> {
   console.log('\n-- Provider configuration edges (real servers) --------------------');
 
   /**
-   * `ZERO_API_MODE` is pinned off here, and that is isolation rather than
-   * indulgence.
+   * Gemini is now IMPLEMENTED, so this assertion changed — and it got stricter.
    *
-   * This assertion is about the PROVIDER FACTORY's gemini seam: that an
-   * unimplemented provider says so instead of falling back. Level 20 later
-   * added a zero-API check that runs BEFORE the provider switch, so with
-   * `.env.local`'s `ZERO_API_MODE=true` inherited, this request is refused as
-   * a mode violation (500) and never reaches the seam at all — which is
-   * correct behaviour and made this test measure the wrong thing.
+   * It used to assert 501 `not_implemented`, which was correct while gemini
+   * was an anticipated seam with no adapter behind it. There is an adapter
+   * now, so 501 is the wrong expectation and the test was describing the old
+   * world rather than a broken one.
    *
-   * Pinning it off restores the single variable under test. The Level 20
-   * behaviour is not lost: `verify-offline.ts` asserts both directions with a
-   * control, precisely so neither check can silently stand in for the other.
+   * What Level 19 actually needs proving is unchanged: selecting a provider
+   * SELECTS it, and never silently falls back to another. Without a key the
+   * Gemini provider refuses with a configuration error — it does not quietly
+   * answer from Ollama, which is the failure that would matter. `ZERO_API_MODE`
+   * stays pinned off so the Level 20 check is not what is being measured.
    */
-  await withServer(PORT_A, { LLM_PROVIDER: 'gemini', ZERO_API_MODE: 'false' }, async (server) => {
-    const outcome = await ask(server.port, 'hello', 30_000);
-    check(
-      outcome.status === 501,
-      'LLM_PROVIDER=gemini answers 501 not_implemented (zero-API mode pinned off)',
-      `HTTP ${outcome.status}`,
-    );
-    check(
-      outcome.error !== null && !/api[_-]?key/i.test(outcome.error),
-      '  and the refusal mentions no credential',
-      outcome.error ?? '(none)',
-    );
-    return null;
-  });
+  await withServer(
+    PORT_A,
+    { LLM_PROVIDER: 'gemini', ZERO_API_MODE: 'false', GEMINI_API_KEY: undefined },
+    async (server) => {
+      const outcome = await ask(server.port, 'hello', 30_000);
+      check(
+        outcome.status === 500,
+        'LLM_PROVIDER=gemini without a key is a configuration error',
+        `HTTP ${outcome.status}`,
+      );
+      check(
+        outcome.deltas === 0 && outcome.answer.length === 0,
+        '  and it did NOT silently fall back to Ollama and answer',
+        `${outcome.deltas} deltas`,
+      );
+      check(
+        outcome.error !== null && !/GEMINI_API_KEY|gemini|google/i.test(outcome.error),
+        '  with a public message naming no provider or variable',
+        outcome.error ?? '(none)',
+      );
+      // The reason belongs in the log, not the response.
+      check(
+        /GEMINI_API_KEY is not set/.test(server.output()),
+        '  while the server log states the actual reason',
+      );
+      return null;
+    },
+  );
 
   await withServer(PORT_A, { LLM_PROVIDER: 'wat-provider' }, async (server) => {
     const outcome = await ask(server.port, 'hello', 30_000);

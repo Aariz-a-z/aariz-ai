@@ -1,130 +1,62 @@
 /**
- * Local embeddings via Ollama.
+ * Embedding provider selection, batching, retry and validation.
  *
- * Server-only. No paid embedding API is involved: vectors are produced by a
- * model running on this machine.
+ * The counterpart to `src/lib/llm.ts`. Application code imports from here and
+ * never from `embeddings/ollama` or `embeddings/gemini`, so adding a provider
+ * means adding an adapter and a case below and nothing else (Roadmap Rule 8).
  *
- * Two behaviours here were measured against the running model rather than
- * assumed (Level 5 verification):
+ * THE PUBLIC SURFACE IS UNCHANGED
+ * -------------------------------
+ * `embedDocuments`, `embedDocumentsWithTokenCounts`, `embedQuery`,
+ * `getEmbeddingModel`, `EmbeddingError` and `EMBEDDING_DIMENSION` are exactly
+ * what they were when this module talked to Ollama directly. `retrieval.ts`,
+ * `ingest/pipeline.ts` and six verification scripts import them and needed no
+ * change — which is the point of cutting the seam underneath rather than
+ * through them.
  *
- *  1. `POST /api/embed` accepts an array for `input` and returns one vector
- *     per element, so batching is a single round trip.
+ * WHAT LIVES HERE RATHER THAN IN AN ADAPTER
+ * -----------------------------------------
+ * Batching, retry with backoff, input validation, and the dimension check.
+ * All four are policy that must not differ between providers: an adapter that
+ * forgot to retry, or checked a different width, would show up as a quiet
+ * difference in retrieval quality rather than as an obvious bug. Adapters do
+ * one batch call and map their own errors, and nothing else.
  *
- *  2. nomic-embed-text requires task-instruction prefixes. Prefixing changes
- *     the vector materially (cosine 0.917 against the unprefixed form), and
- *     asymmetric prefixing measurably improves retrieval separation — the
- *     relevant/irrelevant cosine margin rose from 0.344 to 0.371 on a probe
- *     pair. This is why `embedDocuments` and `embedQuery` are separate
- *     functions rather than one `embed()`: callers must not have to remember
- *     which prefix applies.
- *
- * Level 6 consumes this to ingest documents; Level 7 consumes `embedQuery`
- * for retrieval. Neither exists yet.
+ * Server-only. `OLLAMA_*` and `GEMINI_API_KEY` are un-prefixed on purpose, so
+ * Next never inlines them into a client bundle.
  */
 
-// Relative rather than the usual '@/' alias, and with an explicit extension:
-// EMBEDDING_DIMENSION is a runtime value, and scripts/verify-embeddings.ts
-// imports this module directly under `node --experimental-strip-types`, which
-// resolves neither tsconfig path aliases nor extensionless specifiers.
 import { EMBEDDING_DIMENSION } from '../types/database.ts';
+import { createGeminiEmbeddingProvider, getGeminiEmbedModel } from './embeddings/gemini.ts';
+import { createOllamaEmbeddingProvider, getOllamaEmbedModel } from './embeddings/ollama.ts';
+import {
+  EmbeddingError,
+  type EmbedOptions,
+  type EmbedTask,
+  type EmbeddedText,
+  type EmbeddingProvider,
+} from './embeddings/types.ts';
+import { estimateTokens } from './ingest/tokens.ts';
 
 export { EMBEDDING_DIMENSION };
-
-/** Model tag. Overridable, but the dimension must keep matching the schema. */
-const DEFAULT_EMBED_MODEL = 'nomic-embed-text';
-const DEFAULT_BASE_URL = 'http://localhost:11434';
-
-/**
- * Level 16 — upstream timeout for embedding calls.
- *
- * Same reasoning as the generation timeout: an upload holds a Level 14
- * concurrency slot while it embeds, so a stalled embedding server would pin a
- * slot indefinitely. 30 s is generous against the measured ~1.6 s per batch
- * (Level 5) while still failing fast enough to free the slot.
- */
-const DEFAULT_TIMEOUT_MS = 30_000;
-
-function timeoutMs(): number {
-  const raw = process.env.OLLAMA_EMBED_TIMEOUT_MS?.trim();
-  if (!raw) return DEFAULT_TIMEOUT_MS;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 1_000) {
-    // A plain Error, not an EmbeddingError: this is operator misconfiguration,
-    // not a failure of the embedding domain, and widening the Level 5 error
-    // union for it would blur that distinction. It should also not be caught by
-    // any `instanceof EmbeddingError` handler and quietly reported as a
-    // provider problem.
-    throw new Error(`OLLAMA_EMBED_TIMEOUT_MS must be a number >= 1000, received "${raw}".`);
-  }
-  return parsed;
-}
+export { EmbeddingError } from './embeddings/types.ts';
+export type {
+  EmbedOptions,
+  EmbedTask,
+  EmbeddedText,
+  EmbeddingErrorCode,
+  EmbeddingProvider,
+} from './embeddings/types.ts';
 
 /**
- * Task prefixes required by nomic-embed-text. Stored text and search text are
- * embedded into deliberately different regions of the space.
- */
-const DOCUMENT_PREFIX = 'search_document: ';
-const QUERY_PREFIX = 'search_query: ';
-
-/**
- * Texts per request. Ollama accepts more, but this machine is CPU-only with
- * two cores — a large batch produces one long unresponsive call and a coarse
- * failure unit, since a single bad text fails the whole batch.
+ * Texts per request. Ollama accepts more, but the reference machine is
+ * CPU-only with two cores — a large batch produces one long unresponsive call
+ * and a coarse failure unit, since a single bad text fails the whole batch.
  */
 const DEFAULT_BATCH_SIZE = 16;
 
 const DEFAULT_MAX_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 500;
-
-export type EmbeddingErrorCode =
-  | 'invalid_input'
-  | 'provider_unreachable'
-  | 'model_not_found'
-  | 'dimension_mismatch'
-  | 'provider_error';
-
-export class EmbeddingError extends Error {
-  readonly code: EmbeddingErrorCode;
-
-  constructor(code: EmbeddingErrorCode, message: string) {
-    super(message);
-    this.name = 'EmbeddingError';
-    this.code = code;
-  }
-}
-
-export interface EmbedOptions {
-  signal?: AbortSignal;
-  /** Texts per request. Defaults to 16. */
-  batchSize?: number;
-  /** Total attempts per batch, including the first. Defaults to 3. */
-  maxAttempts?: number;
-}
-
-interface OllamaEmbedResponse {
-  model?: string;
-  embeddings?: number[][];
-  /** Total tokens consumed by this request, across all inputs. */
-  prompt_eval_count?: number;
-  error?: string;
-}
-
-/** One embedded text with the model's own token count for it. */
-export interface EmbeddedText {
-  embedding: number[];
-  /**
-   * Exact token count reported by the embedding model, not an estimate.
-   * Only meaningful when the text was embedded on its own — a batched
-   * request reports one total for the whole batch.
-   */
-  tokenCount: number;
-}
-
-interface BatchResult {
-  embeddings: number[][];
-  /** Total for the batch. Per-text only when the batch held one text. */
-  promptEvalCount: number;
-}
 
 function assertServerOnly(): void {
   if (typeof window !== 'undefined') {
@@ -134,19 +66,70 @@ function assertServerOnly(): void {
   }
 }
 
-export function getEmbeddingModel(): string {
-  return process.env.OLLAMA_EMBED_MODEL?.trim() || DEFAULT_EMBED_MODEL;
+/**
+ * Which embedding provider is configured.
+ *
+ * Selected by `LLM_PROVIDER`, the SAME variable that selects the generation
+ * provider, and deliberately not a second one. Two switches would permit
+ * Gemini generation with Ollama embeddings — a combination that works on a
+ * laptop and cannot work on Vercel, and which would fail only at the first
+ * upload rather than at startup.
+ *
+ * `disabled` (Level 23's demo mode) has no embedding provider: the routes
+ * refuse before reaching here, and this throws if anything ever slips past.
+ */
+function providerId(): string {
+  return (process.env.LLM_PROVIDER ?? 'ollama').trim().toLowerCase();
 }
 
-function getBaseUrl(): string {
-  return (process.env.OLLAMA_BASE_URL?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, '');
+export function createEmbeddingProvider(): EmbeddingProvider {
+  const id = providerId();
+
+  switch (id) {
+    case 'ollama':
+      return createOllamaEmbeddingProvider();
+    case 'gemini':
+      return createGeminiEmbeddingProvider();
+    case 'disabled':
+      throw new EmbeddingError(
+        'provider_error',
+        'Embedding is unavailable: this deployment is configured for no inference.',
+      );
+    default:
+      throw new EmbeddingError(
+        'provider_error',
+        `Unknown LLM_PROVIDER "${id}". Supported: ollama, gemini, disabled.`,
+      );
+  }
+}
+
+/**
+ * The active embedding model tag.
+ *
+ * Read without constructing a provider so it stays cheap and side-effect free
+ * — `reingest.ts` calls it to label staged rows, and the health page calls it
+ * on a path that must not throw.
+ */
+export function getEmbeddingModel(): string {
+  return providerId() === 'gemini' ? getGeminiEmbedModel() : getOllamaEmbedModel();
+}
+
+/** Which provider produced the vectors. Used by health and monitoring. */
+export function getEmbeddingProviderId(): string {
+  return providerId();
 }
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
 }
 
-/** Transient failures are worth retrying; a malformed request never is. */
+/**
+ * Transient failures are worth retrying; a malformed request never is.
+ *
+ * `quota_exceeded` is deliberately NOT retryable. Retrying a rate-limit
+ * response is how a budget overrun becomes a much larger one, and the whole
+ * point of the Gemini budget is to stop that.
+ */
 function isRetryable(error: unknown): boolean {
   if (error instanceof EmbeddingError) {
     return error.code === 'provider_unreachable' || error.code === 'provider_error';
@@ -158,72 +141,26 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+interface BatchOutcome {
+  embeddings: number[][];
+  promptEvalCount: number;
+}
+
 /**
- * Embed one batch, with dimension checking.
+ * One batch, with the dimension check every provider is held to.
  *
  * A vector of the wrong width would be silently unusable — pgvector rejects it
- * at insert time with an opaque error, or worse, a future model change makes
- * every stored vector quietly incomparable. Checking here fails at the source.
+ * at insert time with an opaque error, or worse, a model change makes every
+ * stored vector quietly incomparable. Checking here fails at the source, and
+ * names the Level 22 procedure because that is the actual remedy.
  */
-async function embedBatch(texts: string[], options: EmbedOptions): Promise<BatchResult> {
-  const model = getEmbeddingModel();
-  const url = `${getBaseUrl()}/api/embed`;
-
-  const budget = AbortSignal.timeout(timeoutMs());
-  const combined = options.signal ? AbortSignal.any([options.signal, budget]) : budget;
-
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model, input: texts }),
-      signal: combined,
-    });
-  } catch (caught) {
-    // Our budget, not the caller's: report it as the provider being
-    // unresponsive so the concurrency slot is released with a real error.
-    if (budget.aborted) {
-      throw new EmbeddingError(
-        'provider_unreachable',
-        `The embedding server did not respond within ${timeoutMs()}ms.`,
-      );
-    }
-    if (isAbortError(caught)) throw caught;
-    const detail = caught instanceof Error ? caught.message : String(caught);
-    throw new EmbeddingError(
-      'provider_unreachable',
-      `Cannot reach the embedding server. Is Ollama running? (${detail})`,
-    );
-  }
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => `HTTP ${response.status}`);
-    if (response.status === 404) {
-      throw new EmbeddingError(
-        'model_not_found',
-        `Embedding model "${model}" is not installed. Pull it with: ollama pull ${model}`,
-      );
-    }
-    throw new EmbeddingError(
-      'provider_error',
-      `Embedding request failed with HTTP ${response.status}: ${detail}`,
-    );
-  }
-
-  const data = (await response.json()) as OllamaEmbedResponse;
-
-  if (data.error) {
-    throw new EmbeddingError('provider_error', `Embedding server error: ${data.error}`);
-  }
-
-  const embeddings = data.embeddings;
-  if (!Array.isArray(embeddings) || embeddings.length !== texts.length) {
-    throw new EmbeddingError(
-      'provider_error',
-      `Expected ${texts.length} embeddings, received ${Array.isArray(embeddings) ? embeddings.length : 'none'}.`,
-    );
-  }
+async function embedBatch(
+  provider: EmbeddingProvider,
+  texts: string[],
+  task: EmbedTask,
+  options: EmbedOptions,
+): Promise<BatchOutcome> {
+  const { embeddings, promptEvalCount } = await provider.embedBatch(texts, task, options);
 
   for (const [index, vector] of embeddings.entries()) {
     if (!Array.isArray(vector) || vector.length !== EMBEDDING_DIMENSION) {
@@ -231,7 +168,7 @@ async function embedBatch(texts: string[], options: EmbedOptions): Promise<Batch
         'dimension_mismatch',
         `Embedding ${index} has dimension ${Array.isArray(vector) ? vector.length : 'unknown'}, ` +
           `but the database column is vector(${EMBEDDING_DIMENSION}). ` +
-          `Model "${model}" does not match the schema — see Level 22 for the reindex procedure.`,
+          `Model "${provider.model}" does not match the schema — see Level 22 for the reindex procedure.`,
       );
     }
     if (vector.some((value) => !Number.isFinite(value))) {
@@ -239,17 +176,22 @@ async function embedBatch(texts: string[], options: EmbedOptions): Promise<Batch
     }
   }
 
-  return { embeddings, promptEvalCount: data.prompt_eval_count ?? 0 };
+  return { embeddings, promptEvalCount };
 }
 
 /** Retry transient failures with exponential backoff. Failures are never swallowed. */
-async function embedBatchWithRetry(texts: string[], options: EmbedOptions): Promise<BatchResult> {
+async function embedBatchWithRetry(
+  provider: EmbeddingProvider,
+  texts: string[],
+  task: EmbedTask,
+  options: EmbedOptions,
+): Promise<BatchOutcome> {
   const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      return await embedBatch(texts, options);
+      return await embedBatch(provider, texts, task, options);
     } catch (caught) {
       if (isAbortError(caught)) throw caught;
       lastError = caught;
@@ -300,27 +242,39 @@ export async function embedDocuments(
   if (texts.length === 0) return [];
   validateTexts(texts);
 
+  const provider = createEmbeddingProvider();
   const batchSize = Math.max(1, options.batchSize ?? DEFAULT_BATCH_SIZE);
   const results: number[][] = [];
 
   for (let start = 0; start < texts.length; start += batchSize) {
-    const batch = texts.slice(start, start + batchSize).map((text) => `${DOCUMENT_PREFIX}${text}`);
-    results.push(...(await embedBatchWithRetry(batch, options)).embeddings);
+    const batch = texts.slice(start, start + batchSize);
+    results.push(...(await embedBatchWithRetry(provider, batch, 'document', options)).embeddings);
   }
 
   return results;
 }
 
 /**
- * Embed texts for storage and return each one's exact token count.
+ * Embed texts for storage and return each one's token count.
  *
  * Embeds one text per request, because a batched request reports a single
- * `prompt_eval_count` for the whole batch and per-chunk counts are what the
- * database stores. That is not the cost it sounds like: measured on this
- * machine, ten single calls took 1.63 s against 3.16 s for one ten-text batch,
- * so unbatching is actually faster here as well as more informative.
+ * count for the whole batch and per-chunk counts are what the database stores.
+ * That is not the cost it sounds like: measured on the reference machine, ten
+ * single calls took 1.63 s against 3.16 s for one ten-text batch, so
+ * unbatching is actually faster there as well as more informative.
  *
- * Order is preserved: result[i] corresponds to texts[i].
+ * WHERE THE COUNT COMES FROM, AND WHY IT DIFFERS BY PROVIDER
+ * ----------------------------------------------------------
+ * Ollama reports `prompt_eval_count` — the model's own figure, which is what
+ * `chunks.token_count` has always held. The Gemini embedding endpoint reports
+ * nothing, and the column is `not null check (token_count > 0)`, so a zero
+ * would fail every insert.
+ *
+ * Rather than migrate a Level 4 constraint, a provider that reports no count
+ * falls back to the Level 6 estimator. The consequence is stated plainly
+ * because it is a real one: for Gemini-embedded rows `token_count` is an
+ * ESTIMATE, not the model's own count. It is used for chunk-boundary
+ * decisions and reporting, never for billing or correctness.
  */
 export async function embedDocumentsWithTokenCounts(
   texts: string[],
@@ -331,18 +285,24 @@ export async function embedDocumentsWithTokenCounts(
   if (texts.length === 0) return [];
   validateTexts(texts);
 
+  const provider = createEmbeddingProvider();
   const results: EmbeddedText[] = [];
 
   for (const text of texts) {
     const { embeddings, promptEvalCount } = await embedBatchWithRetry(
-      [`${DOCUMENT_PREFIX}${text}`],
+      provider,
+      [text],
+      'document',
       options,
     );
     const embedding = embeddings[0];
     if (!embedding) {
-      throw new EmbeddingError('provider_error', 'Embedding server returned no vector.');
+      throw new EmbeddingError('provider_error', 'The embedding provider returned no vector.');
     }
-    results.push({ embedding, tokenCount: promptEvalCount });
+    results.push({
+      embedding,
+      tokenCount: promptEvalCount > 0 ? promptEvalCount : Math.max(1, estimateTokens(text)),
+    });
   }
 
   return results;
@@ -351,18 +311,23 @@ export async function embedDocumentsWithTokenCounts(
 /**
  * Embed a search query.
  *
- * Uses a different task prefix from `embedDocuments`. Embedding a query as
- * though it were a document measurably degrades retrieval, so the two paths
- * are deliberately not interchangeable.
+ * Uses the `query` task rather than `document`. Embedding a query as though it
+ * were a document measurably degrades retrieval, so the two paths are
+ * deliberately not interchangeable — see `embeddings/types.ts` for how each
+ * provider expresses that.
  */
 export async function embedQuery(text: string, options: EmbedOptions = {}): Promise<number[]> {
   assertServerOnly();
 
   validateTexts([text]);
 
-  const [vector] = (await embedBatchWithRetry([`${QUERY_PREFIX}${text}`], options)).embeddings;
+  const provider = createEmbeddingProvider();
+  const [vector] = (await embedBatchWithRetry(provider, [text], 'query', options)).embeddings;
   if (!vector) {
-    throw new EmbeddingError('provider_error', 'Embedding server returned no vector for the query.');
+    throw new EmbeddingError(
+      'provider_error',
+      'The embedding provider returned no vector for the query.',
+    );
   }
   return vector;
 }

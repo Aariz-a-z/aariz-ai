@@ -30,7 +30,7 @@
  * Server-only.
  */
 
-import { isInferenceDisabled } from './inference-mode.ts';
+import { isGeminiProvider, isInferenceDisabled } from './inference-mode.ts';
 import { getSupabaseAdminClient, isSupabaseConfigured } from './supabase/server.ts';
 
 export type DependencyState = 'available' | 'unavailable';
@@ -98,6 +98,33 @@ async function probeLlm(): Promise<DependencyState> {
   // it would spend the full timeout on every health check reaching for a
   // `localhost` that, in a serverless container, is the container itself.
   if (isInferenceDisabled()) return 'unavailable';
+
+  /**
+   * Gemini mode never touches `localhost`.
+   *
+   * This is the check that keeps a hosted deployment from reaching for a
+   * machine that is not there — in a serverless container `localhost` is the
+   * container itself, so the probe would burn its whole timeout on every
+   * health check and report a fault that does not exist.
+   *
+   * Reachability only: the key is sent because the endpoint requires one, and
+   * a rejected key is a genuine "unavailable" that an operator needs to see.
+   * Nothing about the response is reported beyond one word.
+   */
+  if (isGeminiProvider()) {
+    const key = process.env.GEMINI_API_KEY?.trim();
+    if (!key) return 'unavailable';
+    try {
+      const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
+        headers: { 'x-goog-api-key': key },
+        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      });
+      await response.arrayBuffer().catch(() => undefined);
+      return response.ok ? 'available' : 'unavailable';
+    } catch {
+      return 'unavailable';
+    }
+  }
 
   const baseUrl = process.env.OLLAMA_BASE_URL?.trim() || 'http://localhost:11434';
   try {
