@@ -45,22 +45,28 @@ const API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
  * model ids, and a documented default is a guess until something calls the
  * API — expect to revisit this.
  *
- * THINKING TOKENS COME OUT OF THE SAME BUDGET
- * -------------------------------------------
- * Gemini 3.x models reason internally before answering, and those tokens are
- * charged against `maxOutputTokens`. Measured on a six-token prompt: 69
- * thinking tokens before any text. With too small a ceiling the response comes
- * back `finishReason: MAX_TOKENS` with EMPTY content — an answer that silently
- * is not there.
+ * WHY THE *LITE* TIER IS THE DEFAULT: THINKING TOKENS
+ * ---------------------------------------------------
+ * Gemini 3.x "flash" models reason internally before answering, and those
+ * tokens are charged against `maxOutputTokens`. Measured over five runs of a
+ * six-token prompt on `gemini-3.6-flash`: **264-367 thinking tokens out of a
+ * 384 budget**, leaving 24-52 characters of actual answer, and one run in five
+ * already hit `finishReason: MAX_TOKENS`. A grounded RAG answer would be
+ * truncated or empty almost every time.
  *
- * The Level 14 ceilings (384 anonymous / 512 authenticated) were verified to
- * leave room. They are not raised here: that is a cost control, and changing
- * it is the operator's call, not this adapter's.
+ * `thinkingConfig: { thinkingBudget: 0 }` does not rescue it — the model
+ * rejects that with 400.
  *
- * `thinkingConfig: { thinkingBudget: 0 }` does NOT work — this model rejects
- * it with 400 — so thinking cannot be switched off to reclaim the budget.
+ * `gemini-3.5-flash-lite` uses **zero** thinking tokens and answers cleanly, so
+ * the whole Level 14 budget goes to the answer. That keeps the existing cost
+ * controls (384 anonymous / 512 authenticated) working untouched, which is far
+ * better than raising a spend limit to pay for a model's private monologue.
+ *
+ * If you switch to a thinking model, raise `GENERATION_MAX_TOKENS_*`
+ * accordingly — the guard below will otherwise surface an honest error rather
+ * than a blank answer.
  */
-const DEFAULT_MODEL = 'gemini-3.6-flash';
+const DEFAULT_MODEL = 'gemini-3.5-flash-lite';
 
 /**
  * Shorter than the 120 s Ollama budget, deliberately.
@@ -247,6 +253,10 @@ export function createGeminiProvider(config: GeminiConfig): LlmProvider {
 
     async *stream(options: LlmStreamOptions): AsyncGenerator<string, void, unknown> {
       const response = await post(true, options);
+      // Tracked so a stream that yields nothing can be told apart from one
+      // that was cut short — see the guard after the read loop.
+      let produced = 0;
+      let truncated = false;
 
       if (response.body === null) {
         throw new LlmError('provider_error', 'The model provider returned an empty body.', 502);
@@ -282,13 +292,36 @@ export function createGeminiProvider(config: GeminiConfig): LlmProvider {
               continue;
             }
 
+            if (chunk.candidates?.[0]?.finishReason === 'MAX_TOKENS') truncated = true;
+
             const text = textFrom(chunk);
-            if (text.length > 0) yield text;
+            if (text.length > 0) {
+              produced += text.length;
+              yield text;
+            }
           }
         }
       } finally {
         // Releases the connection on abort, error, or early return.
         await reader.cancel().catch(() => undefined);
+      }
+
+      /**
+       * A 200 that produced no text is a failure wearing a success.
+       *
+       * It happens when a thinking model spends the entire `maxOutputTokens`
+       * budget reasoning and has none left to answer with. Yielding nothing
+       * would hand the user a blank reply and record it as a successful
+       * request — worse than an error, because nothing looks wrong. This makes
+       * it visible and names the actual remedy.
+       */
+      if (produced === 0 && truncated) {
+        throw new LlmError(
+          'provider_error',
+          'The model used its entire output budget before answering. ' +
+            'Increase GENERATION_MAX_TOKENS, or use a model that does not reserve tokens for reasoning.',
+          502,
+        );
       }
     },
   };
