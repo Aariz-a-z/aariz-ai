@@ -562,18 +562,33 @@ would fail at the first upload rather than at startup.
 ### Embedding dimension: 768, and no migration
 
 `chunks.embedding` is `vector(768)`, and that width appears in both search
-RPCs. `text-embedding-004` returns 768 **natively**, so the schema, the RPCs
-and the HNSW indexes are untouched.
+RPCs. The schema, the RPCs and the HNSW indexes are untouched by this mode — no
+migration is required.
 
-`gemini-embedding-001` returns 3072 and is **refused** by the dimension check in
-`src/lib/embeddings.ts` before anything reaches the database. To use it, also
-set `GEMINI_EMBED_DIMENSIONS=768` to request truncation.
+`gemini-embedding-001` returns **3072** dimensions by default, which the
+dimension check in `src/lib/embeddings.ts` would refuse before anything reached
+the database. It does not come to that: the adapter **always** sends
+`outputDimensionality: 768`, so the truncation happens upstream and the default
+configuration works with nothing extra set. `GEMINI_EMBED_DIMENSIONS` exists
+only to override that, and should be left unset.
+
+This is belt and braces rather than one mechanism trusted twice — whatever the
+API returns is measured against `EMBEDDING_DIMENSION`, so a wrong model produces
+a precise error on the first call instead of a corrupted index found later.
+Verified against the live API: a real embedding came back with exactly 768
+finite components.
 
 ### ⚠ Switching providers on a populated corpus requires re-ingestion
 
 **Same width is not the same vector space.** A Gemini vector and a nomic vector
 of equal length are not comparable — cosine similarity between them is
 meaningless, and a half-migrated index returns confident nonsense.
+
+> **Checked before this deployment: the corpus is empty** — 0 documents,
+> 0 chunks, 0 rows staged in `chunks_reindex`. There is nothing to migrate, so
+> the first public deployment starts clean and every vector it stores will be
+> produced by Gemini. This warning applies to any *later* provider switch, once
+> real users have uploaded documents.
 
 If documents already exist when you switch, re-embed them:
 
@@ -634,18 +649,100 @@ Dashboard → Settings → Environment Variables. **All server-only. Never
 |---|---|
 | `LLM_PROVIDER` | `gemini` |
 | `GEMINI_API_KEY` | your key from aistudio.google.com/apikey |
-| `GEMINI_MODEL` | `gemini-2.0-flash` |
-| `GEMINI_EMBED_MODEL` | `text-embedding-004` |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` |
+| `GEMINI_EMBED_MODEL` | `gemini-embedding-001` |
 | `GEMINI_REQUESTS_PER_HOUR` / `_PER_DAY` | e.g. `100` / `500` |
 | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY` | as in `.env.example` |
 | `ADMIN_EMAILS` | your address, or `/admin` 404s for everyone |
+| `RATE_LIMIT_TRUST_PROXY` | `true` — **recommended on Vercel**, see below |
 | `WIDGET_ALLOWED_ORIGINS` | your Vercel origin — **set before the build** |
+
+> **These two model ids were verified against a live key, and the previously
+> documented ones do not exist.** `gemini-2.0-flash` and `text-embedding-004`
+> both return 404 — the embedding model has been withdrawn, and a `ListModels`
+> call offers only `gemini-embedding-*`. Documentation is a guess until
+> something calls the API. If a future id is retired the same way, chat fails
+> with `model_not_found` and the fix is this table, not the code.
+>
+> `gemini-3.5-flash-lite` is chosen over the full flash tier because 3.x flash
+> models spend `maxOutputTokens` on internal reasoning before answering —
+> measured at 264–367 tokens of a 384 budget, leaving almost nothing for the
+> reply. The lite tier uses zero.
 
 **Do not set on Vercel:**
 
 - `OLLAMA_BASE_URL`, `OLLAMA_MODEL` — unreachable from a serverless container
 - **`ZERO_API_MODE`** — it enforces *local-only* inference and will **reject
   Gemini with a 500**. Leave it unset in production; keep `true` locally.
+
+### Email delivery — required before real users can sign in
+
+**This is the most likely way a public launch fails, and it fails quietly.**
+
+Supabase projects have "Confirm email" enabled. An account exists the moment
+someone signs up, but it cannot sign in until the address is confirmed — and
+Supabase refuses an unconfirmed sign-in with the *same* generic error as a wrong
+password. That wording is deliberate (distinguishing the two would turn the form
+into an account enumerator), but it means an affected user sees only "incorrect
+email or password" and retypes a password that was always correct.
+
+The application does what it can about this: sign-up raises a dialog telling the
+user to confirm, and the sign-in error names unconfirmed-address as a possible
+cause. Neither helps if the email never arrives.
+
+#### The quota is the problem
+
+Supabase's built-in SMTP is for development. It sends a **handful of messages
+per hour across the whole project** and is explicitly not for production. That
+ceiling was hit during testing on this project without a single real user. Past
+it, sign-up fails with `email rate limit exceeded` and no message is sent.
+
+#### Fix: custom SMTP
+
+Supabase Dashboard → **Project Settings → Authentication → SMTP Settings** →
+enable **Custom SMTP**, then fill in host, port `587`, username, password and a
+sender address. Afterwards raise the cap under **Authentication → Rate Limits →
+"Rate limit for sending emails"**, which stays low until you do.
+
+Two free providers work; the difference matters:
+
+| Provider | Free tier | The catch |
+|---|---|---|
+| **Brevo** | ~300 emails/day | Sends to any address once the account is validated. Best choice without a domain. |
+| **Resend** | 3,000/month | Needs a **verified domain**. Without one it only delivers to your own address — which looks like it works in testing and fails for every real user. |
+
+Enter those credentials yourself in the Supabase dashboard. They are secrets,
+they belong in no file in this repository, and no `NEXT_PUBLIC_` variable.
+
+#### Verifying it actually works
+
+Sign up with an address **you do not own** — a second personal account, not the
+one that already exists. Confirm the message arrives and the link permits
+sign-in. Testing with an already-confirmed address proves nothing, because that
+account can sign in whether or not mail is being delivered.
+
+#### The alternative, and its cost
+
+Turning "Confirm email" off removes the blocker entirely and lets anyone sign in
+immediately. It also lets anyone register an address they do not own. That is a
+product decision, it lives in the Supabase dashboard, and it is not something
+the application can or should do on its own — see the note in
+`scripts/verify-auth.ts` about why the code must never self-confirm an account
+to work around a quota.
+
+### Why `RATE_LIMIT_TRUST_PROXY=true` on Vercel
+
+`resolveIdentity` keys anonymous rate limits on the client address only when
+this is `true`, because `X-Forwarded-For` is forgeable by default and keying on
+a header a caller controls would let anyone mint a fresh budget per request.
+
+Vercel's proxy **overwrites** that header, so on Vercel the leftmost entry is
+trustworthy and this should be `true`. Left at `false`, anonymous callers fall
+back to the server-issued session cookie — which still separates most visitors,
+but lumps every *first* request, before a cookie exists, into one shared bucket.
+
+It is a recommendation, not a change made for you: it is a security-relevant
+setting and the choice is yours.
 
 ### Redeploy after changing environment variables
 
@@ -663,7 +760,8 @@ editing any of them.
 | Chat returns 500 mentioning `GEMINI_API_KEY` | variable not set for the Production environment | add it, then redeploy |
 | Everything 429s | the global Gemini budget is spent | wait for the window, or raise `GEMINI_REQUESTS_PER_*` knowingly |
 | Retrieval returns nonsense after switching providers | nomic and Gemini vectors mixed | run the re-ingestion cycle above |
-| Upload fails with `dimension_mismatch` | embedding model returns ≠ 768 | use `text-embedding-004`, or set `GEMINI_EMBED_DIMENSIONS=768` |
+| Upload fails with `dimension_mismatch` | embedding model returns ≠ 768 | the adapter already requests 768; check `GEMINI_EMBED_MODEL` is `gemini-embedding-001` |
+| Sign-up succeeds, sign-in says the password is wrong | the address was never confirmed | see *Email delivery* below — this is the most likely launch failure |
 
 ### Keeping Ollama for local development
 
