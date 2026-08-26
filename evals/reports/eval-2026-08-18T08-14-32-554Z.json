@@ -1,0 +1,981 @@
+{
+  "generatedAt": "2026-08-18T08:14:32.567Z",
+  "mode": "full",
+  "config": {
+    "topK": 5,
+    "rerank": {
+      "enabled": false,
+      "strategy": "lexical",
+      "candidates": 20,
+      "timeoutMs": 5000
+    },
+    "matchCount": "5",
+    "similarityThreshold": "0.5",
+    "model": "llama3.2:3b",
+    "embedModel": "nomic-embed-text"
+  },
+  "metrics": {
+    "retrievalHitRate": 0.9615384615384616,
+    "topKRecall": 0.9615384615384616,
+    "answerCorrectness": 0.9,
+    "failureRate": 0,
+    "retrievalLatencyMs": {
+      "mean": 321.4230769230769,
+      "p50": 286,
+      "p95": 600
+    }
+  },
+  "rerankComparison": {
+    "OFF": {
+      "hitRate": 0.9615384615384616,
+      "recall": 0.9615384615384616,
+      "meanLatency": 272.46153846153845
+    },
+    "ON": {
+      "hitRate": 1,
+      "recall": 1,
+      "meanLatency": 442.84615384615387
+    }
+  },
+  "correctnessCaveat": "Deterministic substring matching, not semantic judgement. A correct answer phrased unexpectedly is scored wrong, so this is a lower bound. Raw answers are preserved below for manual inspection.",
+  "retrieval": [
+    {
+      "id": "df-01",
+      "kind": "direct_fact",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 346,
+      "retrieved": [
+        "main-engine",
+        "boiler-steam",
+        "main-engine",
+        "emergency",
+        "cooling-water"
+      ]
+    },
+    {
+      "id": "df-02",
+      "kind": "direct_fact",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 220,
+      "retrieved": [
+        "lube-oil",
+        "main-engine",
+        "main-engine",
+        "lube-oil",
+        "fuel-oil"
+      ]
+    },
+    {
+      "id": "df-03",
+      "kind": "direct_fact",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 360,
+      "retrieved": [
+        "boiler-steam",
+        "boiler-steam",
+        "cooling-water",
+        "main-engine",
+        "main-engine"
+      ]
+    },
+    {
+      "id": "df-04",
+      "kind": "direct_fact",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 240,
+      "retrieved": [
+        "cooling-water",
+        "main-engine",
+        "main-engine",
+        "cooling-water",
+        "lube-oil"
+      ]
+    },
+    {
+      "id": "df-05",
+      "kind": "direct_fact",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 600,
+      "retrieved": [
+        "fuel-oil",
+        "oily-water",
+        "ballast-water",
+        "fuel-oil",
+        "watchkeeping"
+      ]
+    },
+    {
+      "id": "df-06",
+      "kind": "direct_fact",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 376,
+      "retrieved": [
+        "emergency",
+        "watchkeeping",
+        "watchkeeping",
+        "maintenance",
+        "emergency"
+      ]
+    },
+    {
+      "id": "md-01",
+      "kind": "multiple_documents",
+      "hit": true,
+      "recall": 1,
+      "rank": 2,
+      "latencyMs": 658,
+      "retrieved": [
+        "maintenance",
+        "fuel-oil",
+        "lube-oil",
+        "main-engine",
+        "fuel-oil"
+      ]
+    },
+    {
+      "id": "md-02",
+      "kind": "multiple_documents",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 524,
+      "retrieved": [
+        "boiler-steam",
+        "cooling-water",
+        "cooling-water",
+        "boiler-steam",
+        "main-engine"
+      ]
+    },
+    {
+      "id": "md-03",
+      "kind": "multiple_documents",
+      "hit": true,
+      "recall": 1,
+      "rank": 2,
+      "latencyMs": 286,
+      "retrieved": [
+        "ballast-water",
+        "oily-water",
+        "maintenance",
+        "oily-water",
+        "ballast-water"
+      ]
+    },
+    {
+      "id": "md-04",
+      "kind": "multiple_documents",
+      "hit": true,
+      "recall": 1,
+      "rank": 2,
+      "latencyMs": 330,
+      "retrieved": [
+        "emergency",
+        "maintenance",
+        "watchkeeping",
+        "maintenance",
+        "watchkeeping"
+      ]
+    },
+    {
+      "id": "pp-01",
+      "kind": "paraphrasing",
+      "hit": false,
+      "recall": 0,
+      "rank": 0,
+      "latencyMs": 333,
+      "retrieved": [
+        "watchkeeping",
+        "emergency",
+        "emergency",
+        "ballast-water",
+        "cooling-water"
+      ]
+    },
+    {
+      "id": "pp-02",
+      "kind": "paraphrasing",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 302,
+      "retrieved": [
+        "watchkeeping",
+        "watchkeeping",
+        "emergency",
+        "emergency",
+        "maintenance"
+      ]
+    },
+    {
+      "id": "pp-03",
+      "kind": "paraphrasing",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 356,
+      "retrieved": [
+        "oily-water",
+        "fuel-oil",
+        "oily-water",
+        "fuel-oil",
+        "lube-oil"
+      ]
+    },
+    {
+      "id": "pp-04",
+      "kind": "paraphrasing",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 264,
+      "retrieved": [
+        "lube-oil",
+        "lube-oil",
+        "main-engine",
+        "fuel-oil",
+        "main-engine"
+      ]
+    },
+    {
+      "id": "pp-05",
+      "kind": "paraphrasing",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 394,
+      "retrieved": [
+        "ballast-water",
+        "ballast-water",
+        "fuel-oil",
+        "cooling-water",
+        "cooling-water"
+      ]
+    },
+    {
+      "id": "et-01",
+      "kind": "exact_terminology",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 224,
+      "retrieved": [
+        "ballast-water",
+        "main-engine",
+        "watchkeeping",
+        "emergency",
+        "maintenance"
+      ]
+    },
+    {
+      "id": "et-02",
+      "kind": "exact_terminology",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 231,
+      "retrieved": [
+        "fuel-oil",
+        "main-engine",
+        "emergency",
+        "emergency",
+        "main-engine"
+      ]
+    },
+    {
+      "id": "et-03",
+      "kind": "exact_terminology",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 245,
+      "retrieved": [
+        "boiler-steam",
+        "cooling-water",
+        "boiler-steam",
+        "fuel-oil",
+        "fuel-oil"
+      ]
+    },
+    {
+      "id": "et-04",
+      "kind": "exact_terminology",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 222,
+      "retrieved": [
+        "main-engine",
+        "main-engine",
+        "emergency",
+        "cooling-water",
+        "lube-oil"
+      ]
+    },
+    {
+      "id": "ng-01",
+      "kind": "negative",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 248,
+      "retrieved": [
+        "main-engine",
+        "maintenance",
+        "watchkeeping",
+        "maintenance",
+        "main-engine"
+      ]
+    },
+    {
+      "id": "ng-02",
+      "kind": "negative",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 248,
+      "retrieved": [
+        "oily-water",
+        "fuel-oil",
+        "ballast-water",
+        "boiler-steam",
+        "boiler-steam"
+      ]
+    },
+    {
+      "id": "ng-03",
+      "kind": "negative",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 301,
+      "retrieved": [
+        "main-engine",
+        "cooling-water",
+        "maintenance",
+        "main-engine",
+        "lube-oil"
+      ]
+    },
+    {
+      "id": "ng-04",
+      "kind": "negative",
+      "hit": true,
+      "recall": 1,
+      "rank": 2,
+      "latencyMs": 248,
+      "retrieved": [
+        "maintenance",
+        "main-engine",
+        "cooling-water",
+        "cooling-water",
+        "emergency"
+      ]
+    },
+    {
+      "id": "am-01",
+      "kind": "ambiguous",
+      "hit": true,
+      "recall": 1,
+      "rank": 4,
+      "latencyMs": 284,
+      "retrieved": [
+        "lube-oil",
+        "cooling-water",
+        "main-engine",
+        "fuel-oil",
+        "boiler-steam"
+      ]
+    },
+    {
+      "id": "am-02",
+      "kind": "ambiguous",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 204,
+      "retrieved": [
+        "cooling-water",
+        "boiler-steam",
+        "cooling-water",
+        "maintenance",
+        "maintenance"
+      ]
+    },
+    {
+      "id": "am-03",
+      "kind": "ambiguous",
+      "hit": true,
+      "recall": 1,
+      "rank": 3,
+      "latencyMs": 313,
+      "retrieved": [
+        "main-engine",
+        "main-engine",
+        "boiler-steam",
+        "lube-oil",
+        "cooling-water"
+      ]
+    }
+  ],
+  "answers": [
+    {
+      "id": "df-01",
+      "kind": "direct_fact",
+      "question": "What is the scavenge air pressure at full load?",
+      "expected_fact": "2.4 bar",
+      "expected_behavior": "answer",
+      "answer": "[1] According to document \"Main Engine Operation\", the scavenge air pressure at full load is 2.4 bar.",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "main-engine",
+        "boiler-steam"
+      ],
+      "firstTokenMs": 61121,
+      "totalMs": 66175
+    },
+    {
+      "id": "df-02",
+      "kind": "direct_fact",
+      "question": "At what lubricating oil pressure does the main engine shut down automatically?",
+      "expected_fact": "2.2 bar",
+      "expected_behavior": "answer",
+      "answer": "The automatic shutdown of the main engine occurs at 2.2 bar. [1]",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "lube-oil",
+        "main-engine"
+      ],
+      "firstTokenMs": 32616,
+      "totalMs": 36527
+    },
+    {
+      "id": "df-03",
+      "kind": "direct_fact",
+      "question": "What is the auxiliary boiler working pressure?",
+      "expected_fact": "7 bar",
+      "expected_behavior": "answer",
+      "answer": "The auxiliary boiler working pressure is 7 bar. [1]",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "boiler-steam",
+        "boiler-steam",
+        "cooling-water"
+      ],
+      "firstTokenMs": 40241,
+      "totalMs": 43139
+    },
+    {
+      "id": "df-04",
+      "kind": "direct_fact",
+      "question": "What jacket cooling water outlet temperature is maintained at the main engine?",
+      "expected_fact": "eighty-five degrees Celsius",
+      "expected_behavior": "answer",
+      "answer": "The jacket cooling water outlet temperature from the main engine is maintained at eighty-five degrees Celsius. [1]",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "cooling-water",
+        "main-engine"
+      ],
+      "firstTokenMs": 34569,
+      "totalMs": 39091
+    },
+    {
+      "id": "df-05",
+      "kind": "direct_fact",
+      "question": "How long is the bunker sample retained on board after delivery?",
+      "expected_fact": "twelve months",
+      "expected_behavior": "answer",
+      "answer": "The provided documents do not cover that.",
+      "correct": false,
+      "refused": true,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "fuel-oil",
+        "oily-water",
+        "ballast-water"
+      ],
+      "firstTokenMs": 40304,
+      "totalMs": 42075
+    },
+    {
+      "id": "df-06",
+      "kind": "direct_fact",
+      "question": "Within how long must the emergency generator connect to the emergency switchboard after a blackout?",
+      "expected_fact": "forty-five seconds",
+      "expected_behavior": "answer",
+      "answer": "According to document [1], \"On loss of main electrical power the emergency generator starts automatically and connects to the emergency switchboard within forty-five seconds.\"",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "emergency",
+        "watchkeeping",
+        "watchkeeping"
+      ],
+      "firstTokenMs": 44440,
+      "totalMs": 51073
+    },
+    {
+      "id": "md-01",
+      "kind": "multiple_documents",
+      "question": "What temperature does the fuel oil purifier run at, and how many running hours between overhauls?",
+      "expected_fact": "ninety-eight degrees Celsius, overhauled every 2000 running hours",
+      "expected_behavior": "answer",
+      "answer": "The fuel oil purifier operates at ninety-eight degrees Celsius. The interval for overhaul is every 2000 running hours. [1]",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "maintenance",
+        "fuel-oil"
+      ],
+      "firstTokenMs": 36428,
+      "totalMs": 42288
+    },
+    {
+      "id": "md-02",
+      "kind": "multiple_documents",
+      "question": "What is the chloride limit for boiler water and what is it for the closed jacket cooling circuit?",
+      "expected_fact": "boiler water 100 ppm, jacket cooling water 50 ppm",
+      "expected_behavior": "answer",
+      "answer": "According to the provided documents, [1], the chloride limit for boiler water must not exceed 100 parts per million. In contrast, the chloride limit for the closed jacket cooling circuit is lower, at 50 parts per million.",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "boiler-steam",
+        "cooling-water"
+      ],
+      "firstTokenMs": 23106,
+      "totalMs": 33304
+    },
+    {
+      "id": "md-03",
+      "kind": "multiple_documents",
+      "question": "Which is kept on board longer, the Oil Record Book or the Ballast Water Record Book?",
+      "expected_fact": "Oil Record Book three years; Ballast Water Record Book two years on board",
+      "expected_behavior": "answer",
+      "answer": "The provided documents state that the retention period for the Ballast Water Record Book is two years from the date of the last entry, and thereafter under the company's control for a further three years. \n\nIn contrast, the Oil Record Book is retained on board for three years from the date of the last entry.\n\nTherefore, the Oil Record Book is kept on board longer than the Ballast Water Record Book.",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "ballast-water",
+        "oily-water",
+        "maintenance"
+      ],
+      "firstTokenMs": 34740,
+      "totalMs": 52485
+    },
+    {
+      "id": "md-04",
+      "kind": "multiple_documents",
+      "question": "How often is the emergency generator tested and what must it achieve when it starts?",
+      "expected_fact": "run on load monthly; must connect within forty-five seconds",
+      "expected_behavior": "answer",
+      "answer": "According to document [1], the emergency generator is run on load monthly. \n\nWhen it starts, it must connect to the emergency switchboard within forty-five seconds.",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "emergency",
+        "maintenance"
+      ],
+      "firstTokenMs": 15861,
+      "totalMs": 22665
+    },
+    {
+      "id": "pp-01",
+      "kind": "paraphrasing",
+      "question": "If we keep the ship going very slowly for a long time, how low can the power be set before it stops being allowed?",
+      "expected_fact": "fifteen per cent of maximum continuous rating",
+      "expected_behavior": "answer",
+      "answer": "According to the provided documents, there is no specific information on the minimum power setting required to continue the ship's operation. The documents do not address this scenario directly.\n\nHowever, it does mention that \"The thirty minute period is not a response time; it is the maximum interval between resets.\" This implies that if an engineer enters the machinery space for a task expected to take five minutes and activates the personnel alarm system, they must reset the system at intervals not exceeding thirty minutes.",
+      "correct": false,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "watchkeeping",
+        "emergency"
+      ],
+      "firstTokenMs": 31374,
+      "totalMs": 50551
+    },
+    {
+      "id": "pp-02",
+      "kind": "paraphrasing",
+      "question": "How often does someone working alone down in the machinery space have to show they are still all right?",
+      "expected_fact": "reset at intervals not exceeding thirty minutes",
+      "expected_behavior": "answer",
+      "answer": "According to document [1], while the space is unattended and an engineer is working within it, the personnel alarm system is activated. The engineer must reset the system at intervals not exceeding thirty minutes. Failure to reset raises a pre-alarm in the space and, if still unanswered, a general alarm on the bridge and in the accommodation.\n\nHowever, this does not necessarily mean that the engineer has to show they are all right every 30 minutes. Instead, it is mentioned that \"The thirty minute period is not a response time; it is the maximum interval between resets.\" [1]\n\nIt is also stated that an engineer entering the space for a task expected to take five minutes still activates the system. This implies that the engineer must show they are all right at regular intervals, but the exact frequency of these checks is not specified in the provided documents.\n\nHowever, it can be inferred from document [2] that the relieving engineer arrives fifteen minutes before the hour to allow a handover walk round with the outgoing engineer. During this handover, the outgoing engineer does not leave until the relief has confirmed understanding of the machinery status and any equipment isolated or locked off. This suggests that the engineer may be required to show they are all right at regular intervals, such as every 15 minutes, during a handover period.\n\nUnfortunately, without further information, it is unclear how often someone working alone down in the machinery space has to show they are still all right.",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "watchkeeping",
+        "watchkeeping",
+        "emergency"
+      ],
+      "firstTokenMs": 30769,
+      "totalMs": 99069
+    },
+    {
+      "id": "pp-03",
+      "kind": "paraphrasing",
+      "question": "How much oil can be left in the water before we are not allowed to pump it over the side?",
+      "expected_fact": "15 parts per million",
+      "expected_behavior": "answer",
+      "answer": "According to document [1], oily mixture from machinery space bilges may be discharged to sea only through approved filtering equipment and only when the oil content of the effluent does not exceed 15 parts per million.",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "oily-water",
+        "fuel-oil"
+      ],
+      "firstTokenMs": 38981,
+      "totalMs": 48365
+    },
+    {
+      "id": "pp-04",
+      "kind": "paraphrasing",
+      "question": "How much oil is put onto the cylinder walls for each unit of power the engine makes?",
+      "expected_fact": "0.8 grams per kilowatt hour",
+      "expected_behavior": "answer",
+      "answer": "According to document [1], the feed rate of cylinder oil is set to 0.8 grams per kilowatt hour at normal service load.",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "lube-oil",
+        "lube-oil"
+      ],
+      "firstTokenMs": 18558,
+      "totalMs": 25191
+    },
+    {
+      "id": "pp-05",
+      "kind": "paraphrasing",
+      "question": "If we have to swap the water in the tanks the old way at sea, how far from shore do we need to be?",
+      "expected_fact": "at least two hundred nautical miles from the nearest land",
+      "expected_behavior": "answer",
+      "answer": "According to the provided documents, if exchange is used as a contingency measure where the treatment system is inoperative and the alternative arrangements have been agreed, it must be carried out at least 200 nautical miles from the nearest land.",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "ballast-water",
+        "ballast-water"
+      ],
+      "firstTokenMs": 22732,
+      "totalMs": 33120
+    },
+    {
+      "id": "et-01",
+      "kind": "exact_terminology",
+      "question": "What does the D-2 standard require?",
+      "expected_fact": "fewer than ten viable organisms per cubic metre of fifty micrometres or greater",
+      "expected_behavior": "answer",
+      "answer": "According to Document 1, the D-2 standard requires that discharged ballast water must contain fewer than ten viable organisms per cubic metre that are fifty micrometres or greater in minimum dimension, and fewer than ten viable organisms per millilitre that are between ten and fifty micrometres.",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "ballast-water",
+        "main-engine"
+      ],
+      "firstTokenMs": 35842,
+      "totalMs": 48896
+    },
+    {
+      "id": "et-02",
+      "kind": "exact_terminology",
+      "question": "What is the gravity disc selected for?",
+      "expected_fact": "the density of the fuel in service",
+      "expected_behavior": "answer",
+      "answer": "The gravity disc is fitted to the fuel oil purifier and is selected for the density of the fuel in service. [1]",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "fuel-oil",
+        "main-engine"
+      ],
+      "firstTokenMs": 33991,
+      "totalMs": 39772
+    },
+    {
+      "id": "et-03",
+      "kind": "exact_terminology",
+      "question": "What is the cascade tank and what is it watched for?",
+      "expected_fact": "condensate returns there and it is observed for oil contamination",
+      "expected_behavior": "answer",
+      "answer": "The cascade tank accommodates thermal expansion and provides a static head at the pump suction. It is fitted with a low level alarm. A persistent need to top up indicates a leak; the tank should not be topped up repeatedly without finding the cause, because each addition dilutes the inhibitor and introduces oxygen.\n\nIn the document \"Cooling Water Systems\", it mentions that the cascade tank is watched for oil contamination before being returned to the boiler.",
+      "correct": false,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "boiler-steam",
+        "cooling-water",
+        "boiler-steam"
+      ],
+      "firstTokenMs": 43168,
+      "totalMs": 62825
+    },
+    {
+      "id": "et-04",
+      "kind": "exact_terminology",
+      "question": "What is the critical speed range of the shaft line?",
+      "expected_fact": "between forty-two and fifty-eight revolutions per minute",
+      "expected_behavior": "answer",
+      "answer": "The critical speed range of the shaft line is between 42 and 58 revolutions per minute. [1]",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "main-engine",
+        "main-engine"
+      ],
+      "firstTokenMs": 20472,
+      "totalMs": 25403
+    },
+    {
+      "id": "ng-01",
+      "kind": "negative",
+      "question": "Is it ever permitted to run continuously inside the critical speed range?",
+      "expected_fact": "No — prohibited under any circumstance",
+      "expected_behavior": "answer",
+      "answer": "According to the provided documents, sustained operation within the resonance band (critical speed range) is prohibited under any circumstance.",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "main-engine",
+        "maintenance"
+      ],
+      "firstTokenMs": 20847,
+      "totalMs": 25947
+    },
+    {
+      "id": "ng-02",
+      "kind": "negative",
+      "question": "Can sludge be discharged to sea if its oil content is below the 15 ppm limit?",
+      "expected_fact": "No — sludge is not discharged to sea under any circumstance",
+      "expected_behavior": "answer",
+      "answer": "According to document [1], oily mixture from machinery space bilges may be discharged to sea only through approved filtering equipment and only when the oil content of the effluent does not exceed 15 parts per million. However, this does not apply to sludge.\n\nDocument [2] states that sludge is not discharged to sea under any circumstance. Instead, it is landed to a reception facility or, where an incinerator is fitted and permitted, burned on board.",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "oily-water",
+        "fuel-oil"
+      ],
+      "firstTokenMs": 3726,
+      "totalMs": 24210
+    },
+    {
+      "id": "ng-03",
+      "kind": "negative",
+      "question": "Does the fifty degree exhaust deviation rule apply to the turbocharger inlet temperature?",
+      "expected_fact": "No — it is not subject to the fifty-degree deviation rule",
+      "expected_behavior": "answer",
+      "answer": "According to document [1], the fifty-degree deviation rule does not apply to the turbocharger inlet temperature. The text states that \"The turbocharger inlet temperature is a separate measurement and is not subject to the fifty-degree deviation rule, because it is a mixed temperature drawn from all cylinders and has no per-cylinder mean to deviate from.\"",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "main-engine",
+        "cooling-water"
+      ],
+      "firstTokenMs": 35031,
+      "totalMs": 50334
+    },
+    {
+      "id": "ng-04",
+      "kind": "negative",
+      "question": "Is water washing the turbine side the correct response to turbocharger surge?",
+      "expected_fact": "No — washing is a routine interval task, not a response to surge",
+      "expected_behavior": "answer",
+      "answer": "According to document [1], \"Turbocharger turbine side water washing is carried out every 250 running hours.\" This instruction states that water washing is a routine cleaning operation and is not a response to surge.",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "maintenance",
+        "main-engine"
+      ],
+      "firstTokenMs": 21612,
+      "totalMs": 30097
+    },
+    {
+      "id": "mi-01",
+      "kind": "missing_information",
+      "question": "What is the vessel's deadweight tonnage?",
+      "expected_fact": null,
+      "expected_behavior": "refuse",
+      "answer": "The provided documents do not contain information about the vessel's deadweight tonnage.",
+      "correct": true,
+      "refused": true,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "ballast-water",
+        "ballast-water"
+      ],
+      "firstTokenMs": 15403,
+      "totalMs": 18999
+    },
+    {
+      "id": "mi-02",
+      "kind": "missing_information",
+      "question": "How many engineers are assigned to the deck department on this vessel?",
+      "expected_fact": null,
+      "expected_behavior": "refuse",
+      "answer": "The provided documents do not cover that.",
+      "correct": true,
+      "refused": true,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "watchkeeping",
+        "emergency"
+      ],
+      "firstTokenMs": 17741,
+      "totalMs": 19439
+    },
+    {
+      "id": "mi-03",
+      "kind": "missing_information",
+      "question": "What is the procedure for launching the lifeboat?",
+      "expected_fact": null,
+      "expected_behavior": "refuse",
+      "answer": "The provided documents do not cover the procedure for launching a lifeboat.",
+      "correct": true,
+      "refused": true,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "emergency",
+        "emergency"
+      ],
+      "firstTokenMs": 32943,
+      "totalMs": 36084
+    },
+    {
+      "id": "mi-04",
+      "kind": "missing_information",
+      "question": "What is the current market price of heavy fuel oil per tonne?",
+      "expected_fact": null,
+      "expected_behavior": "refuse",
+      "answer": "The provided documents do not contain information about the current market price of heavy fuel oil per tonne. The documents cover topics such as storage, treatment, and bunkering of heavy fuel oil, as well as main engine operation, but they do not include pricing information.",
+      "correct": true,
+      "refused": true,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "fuel-oil",
+        "main-engine"
+      ],
+      "firstTokenMs": 2979,
+      "totalMs": 14564
+    },
+    {
+      "id": "am-01",
+      "kind": "ambiguous",
+      "question": "What temperature does the purifier run at?",
+      "expected_fact": "ambiguous: fuel oil purifier ninety-eight, lubricating oil purifier ninety",
+      "expected_behavior": "answer",
+      "answer": "The lubricating oil purifier operates at ninety degrees Celsius. [1]",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "lube-oil",
+        "cooling-water"
+      ],
+      "firstTokenMs": 21438,
+      "totalMs": 24693
+    },
+    {
+      "id": "am-02",
+      "kind": "ambiguous",
+      "question": "What is the chloride limit?",
+      "expected_fact": "ambiguous: jacket cooling water 50 ppm, boiler water 100 ppm",
+      "expected_behavior": "answer",
+      "answer": "The chloride limit for the closed jacket cooling circuit is 50 parts per million. The chloride limit for the auxiliary boiler is 100 parts per million.",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "cooling-water",
+        "boiler-steam"
+      ],
+      "firstTokenMs": 22893,
+      "totalMs": 29768
+    },
+    {
+      "id": "am-03",
+      "kind": "ambiguous",
+      "question": "What pressure is it supposed to be running at?",
+      "expected_fact": "ambiguous: boiler 7 bar, lube oil 4.5 bar, scavenge 2.4 bar, starting air 30 bar",
+      "expected_behavior": "answer",
+      "answer": "[1] According to the provided document, scavenge air pressure at full load is 2.4 bar.",
+      "correct": true,
+      "refused": false,
+      "failed": false,
+      "failure": null,
+      "citedSources": [
+        "main-engine",
+        "main-engine"
+      ],
+      "firstTokenMs": 21456,
+      "totalMs": 26515
+    }
+  ]
+}

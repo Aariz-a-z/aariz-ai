@@ -1,0 +1,434 @@
+{
+  "generatedAt": "2026-08-18T07:53:33.160Z",
+  "mode": "retrieval-only",
+  "config": {
+    "topK": 5,
+    "rerank": {
+      "enabled": false,
+      "strategy": "lexical",
+      "candidates": 20,
+      "timeoutMs": 5000
+    },
+    "matchCount": "5",
+    "similarityThreshold": "0.5",
+    "model": "llama3.2:3b",
+    "embedModel": "nomic-embed-text"
+  },
+  "metrics": {
+    "retrievalHitRate": 0.9615384615384616,
+    "topKRecall": 0.9615384615384616,
+    "answerCorrectness": null,
+    "failureRate": null,
+    "retrievalLatencyMs": {
+      "mean": 214.03846153846155,
+      "p50": 203,
+      "p95": 279
+    }
+  },
+  "rerankComparison": {
+    "OFF": {
+      "hitRate": 0.9615384615384616,
+      "recall": 0.9615384615384616,
+      "meanLatency": 195.6153846153846
+    },
+    "ON": {
+      "hitRate": 1,
+      "recall": 1,
+      "meanLatency": 220.03846153846155
+    }
+  },
+  "correctnessCaveat": "Deterministic substring matching, not semantic judgement. A correct answer phrased unexpectedly is scored wrong, so this is a lower bound. Raw answers are preserved below for manual inspection.",
+  "retrieval": [
+    {
+      "id": "df-01",
+      "kind": "direct_fact",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 279,
+      "retrieved": [
+        "main-engine",
+        "boiler-steam",
+        "main-engine",
+        "emergency",
+        "cooling-water"
+      ]
+    },
+    {
+      "id": "df-02",
+      "kind": "direct_fact",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 183,
+      "retrieved": [
+        "lube-oil",
+        "main-engine",
+        "main-engine",
+        "lube-oil",
+        "fuel-oil"
+      ]
+    },
+    {
+      "id": "df-03",
+      "kind": "direct_fact",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 476,
+      "retrieved": [
+        "boiler-steam",
+        "boiler-steam",
+        "cooling-water",
+        "main-engine",
+        "main-engine"
+      ]
+    },
+    {
+      "id": "df-04",
+      "kind": "direct_fact",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 188,
+      "retrieved": [
+        "cooling-water",
+        "main-engine",
+        "main-engine",
+        "cooling-water",
+        "lube-oil"
+      ]
+    },
+    {
+      "id": "df-05",
+      "kind": "direct_fact",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 172,
+      "retrieved": [
+        "fuel-oil",
+        "oily-water",
+        "ballast-water",
+        "fuel-oil",
+        "watchkeeping"
+      ]
+    },
+    {
+      "id": "df-06",
+      "kind": "direct_fact",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 227,
+      "retrieved": [
+        "emergency",
+        "watchkeeping",
+        "watchkeeping",
+        "maintenance",
+        "emergency"
+      ]
+    },
+    {
+      "id": "md-01",
+      "kind": "multiple_documents",
+      "hit": true,
+      "recall": 1,
+      "rank": 2,
+      "latencyMs": 202,
+      "retrieved": [
+        "maintenance",
+        "fuel-oil",
+        "lube-oil",
+        "main-engine",
+        "fuel-oil"
+      ]
+    },
+    {
+      "id": "md-02",
+      "kind": "multiple_documents",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 231,
+      "retrieved": [
+        "boiler-steam",
+        "cooling-water",
+        "cooling-water",
+        "boiler-steam",
+        "main-engine"
+      ]
+    },
+    {
+      "id": "md-03",
+      "kind": "multiple_documents",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 203,
+      "retrieved": [
+        "oily-water",
+        "ballast-water",
+        "maintenance",
+        "oily-water",
+        "ballast-water"
+      ]
+    },
+    {
+      "id": "md-04",
+      "kind": "multiple_documents",
+      "hit": true,
+      "recall": 1,
+      "rank": 2,
+      "latencyMs": 216,
+      "retrieved": [
+        "emergency",
+        "maintenance",
+        "watchkeeping",
+        "maintenance",
+        "watchkeeping"
+      ]
+    },
+    {
+      "id": "pp-01",
+      "kind": "paraphrasing",
+      "hit": false,
+      "recall": 0,
+      "rank": 0,
+      "latencyMs": 226,
+      "retrieved": [
+        "watchkeeping",
+        "emergency",
+        "emergency",
+        "ballast-water",
+        "cooling-water"
+      ]
+    },
+    {
+      "id": "pp-02",
+      "kind": "paraphrasing",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 198,
+      "retrieved": [
+        "watchkeeping",
+        "watchkeeping",
+        "emergency",
+        "emergency",
+        "maintenance"
+      ]
+    },
+    {
+      "id": "pp-03",
+      "kind": "paraphrasing",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 212,
+      "retrieved": [
+        "oily-water",
+        "fuel-oil",
+        "oily-water",
+        "fuel-oil",
+        "lube-oil"
+      ]
+    },
+    {
+      "id": "pp-04",
+      "kind": "paraphrasing",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 197,
+      "retrieved": [
+        "lube-oil",
+        "lube-oil",
+        "main-engine",
+        "fuel-oil",
+        "main-engine"
+      ]
+    },
+    {
+      "id": "pp-05",
+      "kind": "paraphrasing",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 216,
+      "retrieved": [
+        "ballast-water",
+        "ballast-water",
+        "fuel-oil",
+        "cooling-water",
+        "cooling-water"
+      ]
+    },
+    {
+      "id": "et-01",
+      "kind": "exact_terminology",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 204,
+      "retrieved": [
+        "ballast-water",
+        "main-engine",
+        "watchkeeping",
+        "emergency",
+        "maintenance"
+      ]
+    },
+    {
+      "id": "et-02",
+      "kind": "exact_terminology",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 178,
+      "retrieved": [
+        "fuel-oil",
+        "main-engine",
+        "emergency",
+        "emergency",
+        "main-engine"
+      ]
+    },
+    {
+      "id": "et-03",
+      "kind": "exact_terminology",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 175,
+      "retrieved": [
+        "boiler-steam",
+        "cooling-water",
+        "boiler-steam",
+        "fuel-oil",
+        "fuel-oil"
+      ]
+    },
+    {
+      "id": "et-04",
+      "kind": "exact_terminology",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 208,
+      "retrieved": [
+        "main-engine",
+        "main-engine",
+        "emergency",
+        "cooling-water",
+        "lube-oil"
+      ]
+    },
+    {
+      "id": "ng-01",
+      "kind": "negative",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 190,
+      "retrieved": [
+        "main-engine",
+        "maintenance",
+        "watchkeeping",
+        "maintenance",
+        "main-engine"
+      ]
+    },
+    {
+      "id": "ng-02",
+      "kind": "negative",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 209,
+      "retrieved": [
+        "oily-water",
+        "fuel-oil",
+        "ballast-water",
+        "boiler-steam",
+        "boiler-steam"
+      ]
+    },
+    {
+      "id": "ng-03",
+      "kind": "negative",
+      "hit": true,
+      "recall": 1,
+      "rank": 1,
+      "latencyMs": 205,
+      "retrieved": [
+        "main-engine",
+        "cooling-water",
+        "maintenance",
+        "main-engine",
+        "lube-oil"
+      ]
+    },
+    {
+      "id": "ng-04",
+      "kind": "negative",
+      "hit": true,
+      "recall": 1,
+      "rank": 2,
+      "latencyMs": 223,
+      "retrieved": [
+        "maintenance",
+        "main-engine",
+        "cooling-water",
+        "cooling-water",
+        "emergency"
+      ]
+    },
+    {
+      "id": "am-01",
+      "kind": "ambiguous",
+      "hit": true,
+      "recall": 1,
+      "rank": 4,
+      "latencyMs": 179,
+      "retrieved": [
+        "lube-oil",
+        "cooling-water",
+        "main-engine",
+        "fuel-oil",
+        "boiler-steam"
+      ]
+    },
+    {
+      "id": "am-02",
+      "kind": "ambiguous",
+      "hit": true,
+      "recall": 1,
+      "rank": 2,
+      "latencyMs": 178,
+      "retrieved": [
+        "boiler-steam",
+        "cooling-water",
+        "cooling-water",
+        "maintenance",
+        "maintenance"
+      ]
+    },
+    {
+      "id": "am-03",
+      "kind": "ambiguous",
+      "hit": true,
+      "recall": 1,
+      "rank": 3,
+      "latencyMs": 190,
+      "retrieved": [
+        "main-engine",
+        "main-engine",
+        "boiler-steam",
+        "lube-oil",
+        "cooling-water"
+      ]
+    }
+  ],
+  "answers": []
+}

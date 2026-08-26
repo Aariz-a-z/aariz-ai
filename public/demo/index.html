@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Northwind Marine — demo host site</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 3rem 1.5rem;
+        font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+        color: #18181b;
+        background: #fafafa;
+      }
+      main { max-width: 36rem; margin: 0 auto; }
+      h1 { font-size: 1.5rem; margin: 0 0 0.5rem; }
+      p { color: #52525b; }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.85em;
+        background: #f4f4f5;
+        padding: 0.1em 0.35em;
+        border-radius: 4px;
+      }
+      .note {
+        margin-top: 2rem;
+        padding: 0.75rem 1rem;
+        border-left: 3px solid #d4d4d8;
+        font-size: 0.9rem;
+        color: #71717a;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      ROADMAP.md Level 17 — "Done when: A separate demo website can embed the
+      chatbot."
+
+      This is that separate website. It is a different ORIGIN, not just a
+      different page: it is served by scripts/demo-server.ts on its own port,
+      by a server that knows nothing about Next.js, so embedding the widget
+      here exercises the real cross-origin path — frame-ancestors, the
+      Cross-Origin-Resource-Policy relaxation, the postMessage handshake and
+      the server-side origin allowlist all have to be right for it to work.
+
+      It is deliberately a plain static page with no framework, no build step
+      and no application logic. It exists to prove one criterion, not to become
+      a second application.
+
+      The only integration is the single <script> tag below. That is the whole
+      contract a real site would have.
+    -->
+    <main>
+      <h1>Northwind Marine</h1>
+      <p>
+        A stand-in for a customer's website. It has nothing to do with the chatbot beyond the
+        one script tag at the bottom of this file.
+      </p>
+      <p>
+        The launcher sits in the corner. Everything inside it runs in an iframe served from a
+        different origin, so this page cannot read the conversation and the widget cannot
+        restyle this page.
+      </p>
+
+      <div class="note">
+        This page must be opened at <code>http://localhost:5100</code>. Opening it at
+        <code>127.0.0.1</code> is a different origin, and the allowlist — correctly — will
+        refuse it.
+      </div>
+    </main>
+
+    <script
+      src="http://localhost:3007/widget.js"
+      data-position="bottom-right"
+      data-greeting="Hi! Ask me anything about the Northwind Marine handbook."
+      data-title="Ask Northwind"
+      defer
+    ></script>
+  </body>
+</html>
