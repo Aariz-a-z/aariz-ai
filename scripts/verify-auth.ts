@@ -23,9 +23,11 @@
  *   node --experimental-strip-types scripts/verify-auth.ts
  */
 
+import { readFileSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { signIn } from '../src/lib/auth.ts';
 import { buildConversationContext } from '../src/lib/conversation-context.ts';
@@ -653,7 +655,83 @@ async function main(): Promise<void> {
     );
   }
 
+  verifyConfirmationDialog();
+
   summary();
+}
+
+/**
+ * The sign-up confirmation dialog, and the bypass it must never grow.
+ *
+ * Two separate things are guarded here. The first is reachability: an
+ * unconfirmed account fails sign-in with wording indistinguishable from a wrong
+ * password, so the confirmation step has to be impossible to miss. It was a
+ * quiet line under the form, people read past it, and they burned attempts
+ * retyping a password that had always been correct.
+ *
+ * The second matters far more. Supabase's mail quota runs out, and the obvious
+ * "fix" is to confirm the account automatically when it does. That would let
+ * anyone register an address they do not own by exhausting the quota first —
+ * converting a rate limit into an authentication bypass. This asserts the
+ * quota branch only ever changes what the user is TOLD.
+ *
+ * These are source assertions, and the limit is worth stating: they prove the
+ * wiring exists, not that it renders. The rendering was checked separately in a
+ * real browser against the live production build — portalled to `document.body`,
+ * overlay covering the full 1280x720 viewport, dialog centred at 384px, focus
+ * on its button, and closing on Escape, backdrop and button alike.
+ */
+function verifyConfirmationDialog(): void {
+  console.log('\n-- The confirmation dialog after sign-up ---------------------------');
+
+  const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  const panel = readFileSync(join(ROOT, 'src', 'components', 'auth-panel.tsx'), 'utf8');
+  const code = panel
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .map((line) => line.replace(/\/\/.*$/, ''))
+    .join('\n');
+
+  check(/role="dialog"/.test(code), 'sign-up surfaces a dialog, not only an inline note');
+  check(/aria-modal="true"/.test(code), '  announced to assistive tech as modal');
+  check(/aria-labelledby=/.test(code), '  and given an accessible name');
+  check(
+    /createPortal\(/.test(code) && /from 'react-dom'/.test(panel),
+    '  portalled out of the sidebar, which is an off-canvas drawer at narrow widths',
+  );
+  check(/autoFocus/.test(code), '  with focus moved into it');
+  check(/'Escape'/.test(code), '  dismissible with Escape');
+  check(/setConfirmEmail\(null\)/.test(code), '  and by its own control');
+  check(
+    /stopPropagation/.test(code),
+    '  while a click on the text being read does not dismiss it',
+  );
+  check(
+    /setNotice\(message\)/.test(code),
+    'the inline reminder survives the dialog being dismissed',
+  );
+
+  console.log('\n-- The mail quota is reported, never worked around -----------------');
+
+  check(
+    /rate limit\|too many requests/.test(code),
+    'an exhausted mail quota is recognised rather than shown raw',
+  );
+  check(
+    /limit on the email service, not on your details/.test(code),
+    "  and named as the provider's limit, not the user's mistake",
+  );
+  /**
+   * The bypass assertion. `email_confirm` / `confirmUser` are the service-role
+   * calls that would mark an address verified without the user proving they
+   * own it; none of them belongs anywhere near a browser bundle.
+   */
+  for (const forbidden of ['email_confirm', 'confirmUser', 'updateUserById', 'SERVICE_ROLE']) {
+    check(
+      !panel.includes(forbidden),
+      `  the quota path never self-confirms an account (no ${forbidden})`,
+    );
+  }
 }
 
 main().catch((error: unknown) => {
