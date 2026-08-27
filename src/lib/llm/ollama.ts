@@ -14,12 +14,16 @@
  * nanoseconds. They are not consumed here; `scripts/bench-ollama.ts` reads them.
  */
 
+// Relative rather than the `@/lib` alias, matching `gemini.ts` beside it.
+// Next resolves the alias and plain Node does not, so the alias made this
+// module unloadable from any verification script — the Ollama half of
+// `verify-grounding.ts` crashed on it while the Gemini half ran fine.
 import {
   LlmError,
   isAbortError,
   type LlmProvider,
   type LlmStreamOptions,
-} from '@/lib/llm/types';
+} from './types.ts';
 
 export interface OllamaProviderConfig {
   baseUrl: string;

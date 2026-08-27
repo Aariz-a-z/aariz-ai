@@ -29,6 +29,7 @@
 import { EMBEDDING_DIMENSION } from '../types/database.ts';
 import { createGeminiEmbeddingProvider, getGeminiEmbedModel } from './embeddings/gemini.ts';
 import { createOllamaEmbeddingProvider, getOllamaEmbedModel } from './embeddings/ollama.ts';
+import { isLocalProvider, isZeroApiMode } from './inference-mode.ts';
 import {
   EmbeddingError,
   type EmbedOptions,
@@ -84,6 +85,37 @@ function providerId(): string {
 
 export function createEmbeddingProvider(): EmbeddingProvider {
   const id = providerId();
+
+  /**
+   * ZERO_API_MODE, enforced here as well as in `llm.ts`.
+   *
+   * It was enforced ONLY in `llm.ts`, which meant the mode stopped cloud
+   * generation and did nothing about cloud embeddings. With
+   * `ZERO_API_MODE=true` and `LLM_PROVIDER=gemini`, `/api/chat` correctly
+   * refused while `/api/documents` happily uploaded — sending every chunk of
+   * the user's document to Google. Verified before this change: uploads under
+   * that configuration succeeded and stored non-null Gemini vectors.
+   *
+   * That is the worse half of the leak to have missed. Ingestion makes one API
+   * call per chunk, so it is the LARGER consumer, and the payload is the
+   * document's full text rather than a question — exactly the content a
+   * local-only mode exists to keep local.
+   *
+   * The check is deny-by-default and mirrors `llm.ts` exactly: an unknown
+   * provider is not local, so a provider added later is refused under this mode
+   * without having to remember to add it to any list.
+   *
+   * Placed in the factory rather than in each route because every embedding —
+   * upload, CLI ingestion, re-ingestion, and the query side of retrieval —
+   * passes through here. A route-level check would leave the CLI paths open.
+   */
+  if (isZeroApiMode() && !isLocalProvider(id)) {
+    throw new EmbeddingError(
+      'provider_error',
+      `ZERO_API_MODE is enabled, so only a local provider may be used. ` +
+        `LLM_PROVIDER="${id}" is not local.`,
+    );
+  }
 
   switch (id) {
     case 'ollama':

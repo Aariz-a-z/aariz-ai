@@ -22,9 +22,10 @@ export type DocumentStatus = 'pending' | 'processing' | 'ready' | 'failed';
  * always comes with a migration — see
  * `supabase/migrations/20260827120000_structured_source_types.sql`.
  *
- * `.doc` and `.xls` are deliberately absent. They are legacy OLE compound
- * binaries rather than the ZIP-of-XML their modern namesakes use, and no source
- * type is reserved for a format the extractor cannot actually read.
+ * `.doc` and `.xls` ARE present. They are legacy OLE compound binaries rather
+ * than the ZIP-of-XML their modern namesakes use, so they are read by a
+ * separate container reader (`cfb.ts`) — but they reach the same pipeline and
+ * are stored under their own honest source type.
  */
 export const DOCUMENT_SOURCE_TYPES = [
   'markdown',
@@ -32,7 +33,9 @@ export const DOCUMENT_SOURCE_TYPES = [
   'pdf',
   'html',
   'docx',
+  'doc',
   'xlsx',
+  'xls',
   'csv',
   'json',
 ] as const;

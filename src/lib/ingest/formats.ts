@@ -33,7 +33,9 @@ import type { DocumentSourceType } from '../../types/database.ts';
 export const EXTENSION_TO_SOURCE_TYPE: Record<string, DocumentSourceType> = {
   '.pdf': 'pdf',
   '.docx': 'docx',
+  '.doc': 'doc',
   '.xlsx': 'xlsx',
+  '.xls': 'xls',
   '.csv': 'csv',
   '.json': 'json',
   '.md': 'markdown',
@@ -58,31 +60,19 @@ export const SUPPORTED_EXTENSIONS = Object.keys(EXTENSION_TO_SOURCE_TYPE);
 /**
  * Formats that are recognised and deliberately refused.
  *
- * `.doc` and `.xls` are NOT the older cousins of `.docx` and `.xlsx` in any way
- * that matters here. The modern pair are ZIP archives of XML, which is why they
- * can be read with a ZIP reader and an XML parser. The legacy pair are OLE2
- * compound-file binaries carrying Word's FIB and Excel's BIFF record streams —
- * a completely different container holding a completely different encoding.
+ * EMPTY, and kept rather than deleted.
  *
- * There is no maintained pure-JavaScript reader for either that is safe to
- * point at untrusted uploads, so rather than pretend, they are refused. But
- * they are refused BY NAME: a person who uploads a `.doc` gets told how to
- * convert it, instead of the generic "unsupported file type" they would get
- * from an unknown extension. Recognising a format well enough to explain it is
- * different from supporting it, and much better than silence.
+ * `.doc` and `.xls` lived here until an OLE2 compound-file reader was written
+ * for them (`cfb.ts` and `legacy-office.ts`), so this is no longer the list of
+ * legacy Office formats — it is the mechanism for refusing ANY format by name
+ * with advice instead of a bare "unsupported type". The next format that needs
+ * that treatment adds one line here rather than re-deriving the plumbing.
  *
- * Reading them as UTF-8 was never an option — it would yield OLE header bytes
- * and stream fragments, embed them as if they were prose, and quietly poison
- * retrieval for the whole corpus.
+ * An entry here wins over the generic "unsupported file type" message, so use
+ * it whenever a format is common enough that a user will reasonably try it and
+ * there is something specific worth telling them.
  */
-export const LEGACY_BINARY_FORMATS: Record<string, string> = {
-  '.doc':
-    'Word 97–2003 (.doc) files use a legacy binary format this app cannot read. ' +
-    'Open it in Word and choose File → Save As → .docx, then upload that.',
-  '.xls':
-    'Excel 97–2003 (.xls) files use a legacy binary format this app cannot read. ' +
-    'Open it in Excel and choose File → Save As → .xlsx, then upload that.',
-};
+export const LEGACY_BINARY_FORMATS: Record<string, string> = {};
 
 /**
  * MIME types a browser may report for the formats above.
@@ -101,7 +91,9 @@ export const LEGACY_BINARY_FORMATS: Record<string, string> = {
 export const EXTENSION_TO_MIME: Record<string, string[]> = {
   '.pdf': ['application/pdf'],
   '.docx': ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+  '.doc': ['application/msword'],
   '.xlsx': ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+  '.xls': ['application/vnd.ms-excel'],
   '.csv': ['text/csv', 'application/csv', 'text/plain'],
   '.json': ['application/json', 'text/json', 'text/plain'],
   '.md': ['text/markdown', 'text/plain'],
@@ -137,8 +129,8 @@ export const ACCEPT_ATTRIBUTE = SUPPORTED_EXTENSIONS.join(',');
  * rather than twelve extensions in a row.
  */
 export const FORMAT_GROUPS: { label: string; extensions: string[] }[] = [
-  { label: 'Documents', extensions: ['.pdf', '.docx'] },
-  { label: 'Spreadsheets & data', extensions: ['.xlsx', '.csv', '.json'] },
+  { label: 'Documents', extensions: ['.pdf', '.docx', '.doc'] },
+  { label: 'Spreadsheets & data', extensions: ['.xlsx', '.xls', '.csv', '.json'] },
   { label: 'Text & markup', extensions: ['.md', '.markdown', '.mdx', '.txt', '.text', '.html', '.htm'] },
 ];
 

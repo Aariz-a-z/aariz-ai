@@ -49,6 +49,7 @@ import {
   recordRequest,
   resetMetrics,
 } from '../src/lib/metrics.ts';
+import { describeInference } from '../src/lib/inference-mode.ts';
 import { loadEnvLocal } from './_env.ts';
 
 let passed = 0;
@@ -524,9 +525,18 @@ async function main(): Promise<void> {
        * "nowhere"; it is now "on this authenticated page and NOWHERE ELSE",
        * which is a boundary the old assertion never tested at all.
        */
+      /**
+       * Asserted against the model actually configured, not a list of names.
+       *
+       * This matched `/llama|not configured/`, which was every possibility at
+       * the time and silently became a false negative once a Gemini deployment
+       * displayed `gemini-3.5-flash-lite` — a correct page failing a test that
+       * was checking for yesterday's strings. Comparing against
+       * `describeInference()` tests the property the page is meant to have and
+       * cannot go stale when a provider is added.
+       */
       check(
-        /llama|not configured/i.test(adminHtml),
-        'Level 20: the admin page DOES display the model',
+        adminHtml.includes(describeInference().model),
         adminHtml.match(/Model<\/div>[\s\S]{0,120}?">([^<]+)</)?.[1] ?? 'absent',
       );
       check(adminHtml.includes('Inference mode'), '  and the inference mode');

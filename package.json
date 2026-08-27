@@ -33,7 +33,8 @@
     "verify:reingest": "node --experimental-strip-types scripts/verify-reingest.ts",
     "verify:deployment": "node --experimental-strip-types scripts/verify-deployment.ts",
     "verify:gemini": "node --experimental-strip-types scripts/verify-gemini.ts",
-    "demo": "node --experimental-strip-types scripts/demo-server.ts"
+    "demo": "node --experimental-strip-types scripts/demo-server.ts",
+    "verify:grounding": "node --experimental-strip-types scripts/verify-grounding.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",

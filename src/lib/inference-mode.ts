@@ -43,6 +43,9 @@ const LOCAL_PROVIDERS = new Set(['ollama']);
  * leaving upload enabled would produce a spinner that ends in a timeout, which
  * is a worse lie than an honest refusal.
  */
+import { getGeminiEmbedModel } from './embeddings/gemini.ts';
+import { getGeminiModel } from './llm/gemini.ts';
+
 export const DISABLED_PROVIDER = 'disabled';
 
 export const ZERO_API_MODE_ENV = 'ZERO_API_MODE';
@@ -152,10 +155,31 @@ export function describeInference(): InferenceDescription {
   const local = isLocalProvider(providerId);
   const disabled = providerId === DISABLED_PROVIDER;
 
-  const model =
-    (providerId === 'ollama' ? process.env.OLLAMA_MODEL?.trim() : undefined) || 'not configured';
+  /**
+   * Resolved per provider, which it was not before.
+   *
+   * `model` only ever consulted OLLAMA_MODEL, so a Gemini deployment showed
+   * "not configured" on the admin page. `embeddingModel` was worse: it returned
+   * the Ollama embedding model unconditionally, so an operator running Gemini
+   * was told their vectors came from `nomic-embed-text` when they came from
+   * `gemini-embedding-001`. That is not a cosmetic slip — those two models
+   * produce incomparable vectors, and the Level 22 re-ingestion decision is
+   * made by reading exactly this field.
+   *
+   * The getters are imported rather than the defaults being re-typed here, so
+   * a change to either default cannot leave this page reporting the old one.
+   */
+  const model = disabled
+    ? 'not configured'
+    : providerId === 'gemini'
+      ? getGeminiModel()
+      : process.env.OLLAMA_MODEL?.trim() || 'not configured';
 
-  const embeddingModel = process.env.OLLAMA_EMBED_MODEL?.trim() || 'nomic-embed-text';
+  const embeddingModel = disabled
+    ? 'not configured'
+    : providerId === 'gemini'
+      ? getGeminiEmbedModel()
+      : process.env.OLLAMA_EMBED_MODEL?.trim() || 'nomic-embed-text';
 
   // Mirrors src/lib/rerank.ts, whose default is off. Both strategies it can
   // run — lexical and llm — are local, so reranking never reaches a cloud API

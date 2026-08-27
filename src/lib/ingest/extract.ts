@@ -26,6 +26,7 @@ import {
   SUPPORTED_EXTENSIONS,
   fileExtension,
 } from './formats.ts';
+import { LegacyOfficeError, extractDoc, extractXls } from './legacy-office.ts';
 import {
   StructuredParseError,
   extractCsv,
@@ -243,6 +244,21 @@ export async function extractBuffer(buffer: Buffer, filename: string): Promise<E
         title = stem;
         break;
       }
+      /**
+       * The two legacy OLE2 formats. Different container, same destination —
+       * they produce an `ExtractedDocument` here and everything downstream is
+       * identical to every other format.
+       */
+      case 'doc': {
+        rawText = extractDoc(buffer).text;
+        title = stem;
+        break;
+      }
+      case 'xls': {
+        rawText = extractXls(buffer).text;
+        title = stem;
+        break;
+      }
       case 'csv': {
         rawText = extractCsv(buffer, stem).text;
         title = stem;
@@ -266,7 +282,7 @@ export async function extractBuffer(buffer: Buffer, filename: string): Promise<E
      * paths and internal module names. The format and filename are enough for
      * the user, and the detail goes to the server log instead.
      */
-    if (caught instanceof StructuredParseError) {
+    if (caught instanceof StructuredParseError || caught instanceof LegacyOfficeError) {
       throw new ExtractError('parse_failed', caught.message);
     }
     throw new ExtractError(

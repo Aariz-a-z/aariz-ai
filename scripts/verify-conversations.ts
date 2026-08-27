@@ -705,8 +705,33 @@ async function main(): Promise<void> {
     }
     await rm(dir, { recursive: true, force: true });
 
-    const { count: docs } = await client.from('documents').select('*', { count: 'exact', head: true });
-    const { count: chunks } = await client.from('chunks').select('*', { count: 'exact', head: true });
+    /**
+     * Scoped to the ids THIS RUN created, not to the whole table.
+     *
+     * These asserted the `documents` and `chunks` tables were globally empty,
+     * which only holds on a pristine database. Once the project owner had
+     * uploaded a real document, a perfectly correct cleanup began reporting
+     * failures — and the obvious way to make them green again would have been
+     * to delete somebody's actual file.
+     *
+     * Tracking ids is also stricter than counting rows: a global zero is also
+     * satisfied by a run that created nothing at all, whereas this fails if any
+     * specific row this run made survives.
+     */
+    let documentsLeft = 0;
+    let chunksLeft = 0;
+    for (const id of documentIds) {
+      const { count: d } = await client
+        .from('documents')
+        .select('*', { count: 'exact', head: true })
+        .eq('id', id);
+      const { count: c } = await client
+        .from('chunks')
+        .select('*', { count: 'exact', head: true })
+        .eq('document_id', id);
+      documentsLeft += d ?? 0;
+      chunksLeft += c ?? 0;
+    }
 
     // Conversations belonging to THIS run must be gone. The global count is
     // reported for information but is not asserted to be zero, because rows
@@ -726,8 +751,12 @@ async function main(): Promise<void> {
       .from('messages')
       .select('*', { count: 'exact', head: true });
 
-    check(docs === 0, 'test documents removed', `documents=${docs}`);
-    check(chunks === 0, 'no orphan chunks remain', `chunks=${chunks}`);
+    check(
+      documentsLeft === 0,
+      'every document this run created was removed',
+      `${documentsLeft} of ${documentIds.length} still present`,
+    );
+    check(chunksLeft === 0, 'their chunks went with them', `chunks=${chunksLeft}`);
     check(
       remaining === 0,
       'every conversation created by this run was removed',

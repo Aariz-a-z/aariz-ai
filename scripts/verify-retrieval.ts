@@ -274,10 +274,39 @@ async function main(): Promise<void> {
     }
     await rm(dir, { recursive: true, force: true });
 
-    const { count: docsAfter } = await client.from('documents').select('*', { count: 'exact', head: true });
-    const { count: chunksAfter } = await client.from('chunks').select('*', { count: 'exact', head: true });
-    check(docsAfter === 0, '20. seeded documents removed', `documents=${docsAfter}`);
-    check(chunksAfter === 0, '20b. no orphan chunks remain', `chunks=${chunksAfter}`);
+    /**
+     * Scoped to the ids THIS RUN created, not to the whole table.
+     *
+     * These asserted the `documents` and `chunks` tables were globally empty,
+     * which only holds on a pristine database. Once the project owner had
+     * uploaded a real document, a perfectly correct cleanup began reporting
+     * failures — and the obvious way to make them green again would have been
+     * to delete somebody's actual file.
+     *
+     * Tracking ids is also stricter than counting rows: a global zero is also
+     * satisfied by a run that created nothing at all, whereas this fails if any
+     * specific row this run made survives.
+     */
+    let documentsLeft = 0;
+    let chunksLeft = 0;
+    for (const id of documentIds) {
+      const { count: d } = await client
+        .from('documents')
+        .select('*', { count: 'exact', head: true })
+        .eq('id', id);
+      const { count: c } = await client
+        .from('chunks')
+        .select('*', { count: 'exact', head: true })
+        .eq('document_id', id);
+      documentsLeft += d ?? 0;
+      chunksLeft += c ?? 0;
+    }
+    check(
+      documentsLeft === 0,
+      '20. every document this run seeded was removed',
+      `${documentsLeft} of ${documentIds.length} still present`,
+    );
+    check(chunksLeft === 0, '20b. their chunks went with them', `chunks=${chunksLeft}`);
   }
 
   console.log(`\n${'='.repeat(72)}`);

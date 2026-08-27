@@ -20,7 +20,7 @@
  *   node --experimental-strip-types scripts/verify-documents.ts
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -28,10 +28,7 @@ import { signIn } from '../src/lib/auth.ts';
 import { createAuthedClient, isAuthConfigured } from '../src/lib/supabase/authed.ts';
 import { getSupabaseAdminClient, isSupabaseConfigured } from '../src/lib/supabase/server.ts';
 import { SUPPORTED_EXTENSIONS } from '../src/lib/ingest/extract.ts';
-import {
-  EXTENSION_TO_SOURCE_TYPE,
-  LEGACY_BINARY_FORMATS,
-} from '../src/lib/ingest/formats.ts';
+import { EXTENSION_TO_SOURCE_TYPE } from '../src/lib/ingest/formats.ts';
 import { ACCEPTED_EXTENSIONS } from '../src/lib/documents-client.ts';
 import { UPLOAD_EXTENSIONS } from '../src/lib/documents.ts';
 import { DOCUMENT_SOURCE_TYPES } from '../src/types/database.ts';
@@ -832,22 +829,76 @@ async function main(): Promise<void> {
       );
     }
 
-    // --- Formats that are recognised and refused -----------------------------
-    console.log('\n-- Legacy binaries are refused with instructions -------------------');
+    // --- The two legacy OLE2 formats ----------------------------------------
+    /**
+     * `.doc` and `.xls` used to be refused by name with advice to convert them.
+     * They are read directly now, through a compound-file reader written for
+     * this codebase (`cfb.ts`) rather than a dependency — see the note at the
+     * top of that file for why every available package was rejected.
+     *
+     * Verifying them needs a file that Microsoft actually wrote. A fixture
+     * built here would only prove the reader can read this repository's own
+     * writer, which is the one thing nobody needs to know. So the suite uses a
+     * real sample when one is available and says so plainly when it is not,
+     * rather than inventing coverage.
+     *
+     * `MsoIrmProtector.xls` ships with Windows and is a genuine Excel-produced
+     * BIFF8 workbook, which makes it a legitimate sample on any Windows
+     * machine. Point LEGACY_DOC_SAMPLE / LEGACY_XLS_SAMPLE at your own files to
+     * override.
+     */
+    console.log('\n-- Legacy .doc and .xls --------------------------------------------');
 
-    for (const [extension, advice] of Object.entries(LEGACY_BINARY_FORMATS)) {
-      const response = await alice.upload(`legacy${extension}`, Buffer.from('anything', 'utf8'));
+    const legacySamples: { extension: string; path: string | undefined }[] = [
+      { extension: '.doc', path: process.env.LEGACY_DOC_SAMPLE },
+      {
+        extension: '.xls',
+        path:
+          process.env.LEGACY_XLS_SAMPLE ??
+          'C:\\Windows\\System32\\MSDRM\\MsoIrmProtector.xls',
+      },
+    ];
+
+    for (const sample of legacySamples) {
+      if (!sample.path || !existsSync(sample.path)) {
+        block(
+          `${sample.extension} end-to-end`,
+          `no sample available — set ${sample.extension === '.doc' ? 'LEGACY_DOC_SAMPLE' : 'LEGACY_XLS_SAMPLE'} to a real file`,
+        );
+        continue;
+      }
+
+      const bytes = readFileSync(sample.path);
+      const uploaded = await alice.upload(`legacy-sample${sample.extension}`, bytes);
       check(
-        response.status === 415,
-        `${extension} is refused with 415`,
-        `HTTP ${response.status}`,
+        uploaded.status === 201,
+        `a real ${sample.extension} uploads and processes`,
+        uploaded.status === 201
+          ? `${uploaded.body.document?.chunkCount} chunk(s)`
+          : `HTTP ${uploaded.status} ${uploaded.body.error ?? ''}`,
       );
-      // The generic list would be useless here; the point is that the message
-      // tells the user how to convert the file.
+      if (uploaded.status !== 201) continue;
+
+      const documentId = uploaded.body.document?.id ?? '';
+      const stored = await admin.from('chunks').select('content, embedding').eq('document_id', documentId);
+      const rows = stored.data ?? [];
+      check(rows.length > 0, `  ${sample.extension} produced chunks`, `${rows.length}`);
       check(
-        (response.body.error ?? '').includes(advice.slice(0, 40)),
-        `  and explains how to convert it rather than listing extensions`,
-        JSON.stringify((response.body.error ?? '').slice(0, 70)),
+        rows.every((row) => row.embedding !== null),
+        `  every ${sample.extension} chunk carries an embedding`,
+      );
+      // The failure mode that matters for a binary format: bytes stored as if
+      // they were prose. Real extracted text is overwhelmingly printable.
+      const text = rows.map((row) => row.content).join(' ');
+      const printable = [...text].filter((c) => c >= ' ' || c === '\n' || c === '\t').length;
+      check(
+        text.length > 0 && printable / text.length > 0.99,
+        `  ${sample.extension} yielded readable text, not raw bytes`,
+        `${((printable / Math.max(text.length, 1)) * 100).toFixed(1)}% printable`,
+      );
+      check(
+        !/\uFFFD/.test(text),
+        `  and decoded its character set without replacement characters`,
       );
     }
 

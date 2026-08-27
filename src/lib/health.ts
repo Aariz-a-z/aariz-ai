@@ -30,7 +30,12 @@
  * Server-only.
  */
 
-import { isGeminiProvider, isInferenceDisabled } from './inference-mode.ts';
+import {
+  isGeminiProvider,
+  isInferenceDisabled,
+  isLocalProvider,
+  isZeroApiMode,
+} from './inference-mode.ts';
 import { getSupabaseAdminClient, isSupabaseConfigured } from './supabase/server.ts';
 
 export type DependencyState = 'available' | 'unavailable';
@@ -98,6 +103,23 @@ async function probeLlm(): Promise<DependencyState> {
   // it would spend the full timeout on every health check reaching for a
   // `localhost` that, in a serverless container, is the container itself.
   if (isInferenceDisabled()) return 'unavailable';
+
+  /**
+   * A provider forbidden by ZERO_API_MODE is unavailable, not healthy.
+   *
+   * Reported `available` before this: the probe reached Google, Google
+   * answered, and health said everything was fine — while `/api/chat` and
+   * every upload were refusing that exact configuration. An operator reading
+   * a green health check would have had no idea why nothing worked.
+   *
+   * Checked WITHOUT a network call, and that is the point. The question is not
+   * whether the provider is reachable but whether this deployment is permitted
+   * to use it, and the answer is known from configuration alone. Probing first
+   * would also mean a local-only deployment quietly contacting the very API
+   * the mode exists to avoid — a health check is not an exemption.
+   */
+  const configuredProvider = (process.env.LLM_PROVIDER ?? 'ollama').trim().toLowerCase();
+  if (isZeroApiMode() && !isLocalProvider(configuredProvider)) return 'unavailable';
 
   /**
    * Gemini mode never touches `localhost`.
