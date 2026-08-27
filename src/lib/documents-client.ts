@@ -30,36 +30,30 @@ async function readError(response: Response, fallback: string): Promise<string> 
   return fallback;
 }
 
-/** Returns null when the caller is not signed in, so the UI can hide the panel. */
 /**
- * Extensions the picker offers.
+ * The picker's list, re-exported from the shared registry.
  *
- * Kept deliberately in step with `SUPPORTED_EXTENSIONS` in
- * `src/lib/ingest/extract.ts`. It is duplicated rather than imported because
- * that module pulls in `node:fs` and cannot be loaded in a browser — but a
- * narrower list here is worse than a duplicate: it silently makes a supported
- * format unselectable, and the user has no way to discover that the backend
- * would in fact have accepted it. `.md` and `.html` were missing for exactly
- * that reason.
+ * This used to be a hand-copied array with a comment explaining that it could
+ * not import the real one, because the real one lived in `extract.ts` next to a
+ * `node:fs` import. The copy then drifted from the SERVER's list in the other
+ * direction — the picker offered nine extensions while the upload route
+ * accepted three — so a user could select a Markdown file and be told it was an
+ * unsupported type.
+ *
+ * `formats.ts` imports nothing, so there is no copy any more: the picker, the
+ * upload route and the extractor all read the same array.
  */
-export const ACCEPTED_EXTENSIONS = [
-  '.md',
-  '.markdown',
-  '.mdx',
-  '.txt',
-  '.text',
-  '.pdf',
-  '.html',
-  '.htm',
-  '.docx',
-] as const;
-
-/** For a file input's `accept` attribute. */
-export const ACCEPT_ATTRIBUTE = ACCEPTED_EXTENSIONS.join(',');
+export {
+  ACCEPT_ATTRIBUTE,
+  FORMAT_GROUPS,
+  SUPPORTED_EXTENSIONS as ACCEPTED_EXTENSIONS,
+  describeSupportedFormats,
+} from './ingest/formats.ts';
 
 /** Mirrors MAX_UPLOAD_BYTES server-side, so the UI can refuse early. */
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
+/** Returns null when the caller is not signed in, so the UI can hide the panel. */
 export async function listDocuments(signal?: AbortSignal): Promise<UserDocument[] | null> {
   const response = await fetch('/api/documents', { credentials: 'same-origin', signal });
   if (response.status === 401) return null;

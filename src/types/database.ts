@@ -12,8 +12,35 @@ import type { AnswerSource } from './chat.ts';
 /** Ingestion lifecycle. Only `ready` documents should be retrieved from. */
 export type DocumentStatus = 'pending' | 'processing' | 'ready' | 'failed';
 
-/** Source formats Level 6 is required to support. */
-export type DocumentSourceType = 'markdown' | 'txt' | 'pdf' | 'html' | 'docx';
+/**
+ * Source formats the extraction layer can read.
+ *
+ * Mirrored by the `documents_source_type_valid` CHECK constraint in the
+ * database, and the two must stay in step: a value here that the constraint
+ * rejects fails every upload of that format at the final insert, after the
+ * expensive embedding work has already been paid for. Widening this therefore
+ * always comes with a migration — see
+ * `supabase/migrations/20260827120000_structured_source_types.sql`.
+ *
+ * `.doc` and `.xls` are deliberately absent. They are legacy OLE compound
+ * binaries rather than the ZIP-of-XML their modern namesakes use, and no source
+ * type is reserved for a format the extractor cannot actually read.
+ */
+export const DOCUMENT_SOURCE_TYPES = [
+  'markdown',
+  'txt',
+  'pdf',
+  'html',
+  'docx',
+  'xlsx',
+  'csv',
+  'json',
+] as const;
+
+// Derived from the array rather than declared beside it, so the values and the
+// type cannot disagree — and so a test can iterate the real list at runtime
+// instead of hard-coding a second copy of it.
+export type DocumentSourceType = (typeof DOCUMENT_SOURCE_TYPES)[number];
 
 /**
  * Embedding width, measured from nomic-embed-text at Level 2 — not assumed.

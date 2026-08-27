@@ -210,12 +210,38 @@ async function main(): Promise<void> {
     return;
   }
 
-  const ollamaUrl = process.env.OLLAMA_BASE_URL?.trim() || 'http://localhost:11434';
+  /**
+   * Checked against the provider actually configured.
+   *
+   * This pinged Ollama unconditionally, which was right when Ollama was the
+   * only provider and became wrong once Gemini existed: a healthy Gemini stack
+   * reported `0 passed · 1 blocked` because a service it does not use was not
+   * running. The application's own health endpoint answers the real question —
+   * "can this server embed and generate?" — for whichever provider is in use.
+   */
+  if ((process.env.LLM_PROVIDER ?? 'ollama').trim().toLowerCase() === 'ollama') {
+    const ollamaUrl = process.env.OLLAMA_BASE_URL?.trim() || 'http://localhost:11434';
+    try {
+      const ping = await fetch(`${ollamaUrl}/api/version`, { signal: AbortSignal.timeout(5_000) });
+      if (!ping.ok) throw new Error(String(ping.status));
+    } catch {
+      block('Ollama is not reachable', ollamaUrl);
+      summary();
+      return;
+    }
+  }
+
   try {
-    const ping = await fetch(`${ollamaUrl}/api/version`, { signal: AbortSignal.timeout(5_000) });
-    if (!ping.ok) throw new Error(String(ping.status));
+    const health = (await (await fetch(`${BASE_URL}/api/health`, {
+      signal: AbortSignal.timeout(10_000),
+    })).json()) as { llm?: string; database?: string };
+    if (health.llm !== 'available' || health.database !== 'available') {
+      block('the server reports a dependency down', `llm=${health.llm} database=${health.database}`);
+      summary();
+      return;
+    }
   } catch {
-    block('Ollama is not reachable', ollamaUrl);
+    block('the health endpoint did not answer', `${BASE_URL}/api/health`);
     summary();
     return;
   }
@@ -633,8 +659,32 @@ async function main(): Promise<void> {
     check(usersRemoved === testUserIds.length, 'test accounts removed', `${usersRemoved}/${testUserIds.length}`);
     console.log(`     anonymous test conversations removed: ${anonRemoved}`);
 
-    const { count: docs } = await admin.from('documents').select('*', { count: 'exact', head: true });
-    check(docs === 0, 'test documents removed', `documents=${docs}`);
+    /**
+     * Scoped to the ids THIS RUN created, not to the whole table.
+     *
+     * It used to assert `count === 0` across `documents` entirely, which only
+     * holds on an empty database. The moment the owner of the project uploaded
+     * a real document of their own, a correct cleanup started reporting a
+     * failure — and the obvious way to make it green again would have been to
+     * delete somebody's actual file.
+     *
+     * Tracking ids is also a stronger check than counting: a global count of
+     * zero would be satisfied by a run that created nothing at all, whereas
+     * this fails if any specific document this run made survives.
+     */
+    let survivors = 0;
+    for (const id of testDocumentIds) {
+      const { count } = await admin
+        .from('documents')
+        .select('*', { count: 'exact', head: true })
+        .eq('id', id);
+      survivors += count ?? 0;
+    }
+    check(
+      survivors === 0,
+      'every document this run created was removed',
+      `${survivors} of ${testDocumentIds.length} still present`,
+    );
 
     // Confirm nothing owned by a test user survived the cascade.
     let orphaned = 0;

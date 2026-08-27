@@ -2,7 +2,7 @@
 
 import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
 
-import { ACCEPT_ATTRIBUTE } from '@/lib/documents-client';
+import { ACCEPT_ATTRIBUTE, describeSupportedFormats } from '@/lib/documents-client';
 
 /** Cap the auto-grow so a long draft can never swallow the message list. */
 const MAX_TEXTAREA_HEIGHT_PX = 200;
@@ -117,7 +117,7 @@ export function ChatComposer({
               onClick={openPicker}
               disabled={isUploading}
               aria-label={isUploading ? 'Uploading document' : 'Attach a document'}
-              title={attachDisabledReason ?? 'Attach a document'}
+              title={attachDisabledReason ?? `Attach a document — ${describeSupportedFormats()}`}
               className="shrink-0 rounded-xl border border-zinc-300 bg-white p-3 text-zinc-600 transition hover:bg-zinc-100 focus:ring-2 focus:ring-blue-500/40 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
             >
               {isUploading ? (

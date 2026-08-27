@@ -11,11 +11,14 @@ import { ErrorBanner } from '@/components/error-banner';
 import { MessageList } from '@/components/message-list';
 import { fetchAuthState, type AuthState } from '@/lib/auth-client';
 import {
+  ACCEPTED_EXTENSIONS,
   MAX_UPLOAD_BYTES,
+  describeSupportedFormats,
   listDocuments as listDocumentsRequest,
   uploadDocument,
   type UserDocument,
 } from '@/lib/documents-client';
+import { LEGACY_BINARY_FORMATS, fileExtension } from '@/lib/ingest/formats';
 import { streamReply } from '@/lib/chat-transport';
 import {
   deleteConversation as deleteConversationRequest,
@@ -81,7 +84,19 @@ export function Chat({ inferenceDisabled = false }: ChatProps) {
   const [documents, setDocuments] = useState<UserDocument[] | null>(null);
   const [isUploading, setUploading] = useState(false);
   /** Transient confirmation that a document finished indexing. */
-  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
+  /**
+   * The upload's own status, kept apart from the chat's.
+   *
+   * These used to share `error` and `status`, so a rejected spreadsheet put the
+   * CHAT into an error state and the user was told "Could not generate a reply"
+   * about a file they had just attached. An upload failing says nothing about
+   * whether the model can answer, and the two should never have been the same
+   * state.
+   */
+  const [upload, setUpload] = useState<{
+    kind: 'working' | 'done' | 'error';
+    message: string;
+  } | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const lastPromptRef = useRef<string>('');
@@ -377,29 +392,65 @@ export function Chat({ inferenceDisabled = false }: ChatProps) {
    * long upload that was always going to be refused.
    */
   const handleAttach = useCallback((file: File) => {
+    /**
+     * Both pre-flight checks exist so an obviously doomed upload fails
+     * instantly rather than after the file has been sent. The SERVER performs
+     * both again and its answer is the authoritative one — this is a courtesy,
+     * never the control.
+     */
+    const extension = fileExtension(file.name);
+    if (!(ACCEPTED_EXTENSIONS as readonly string[]).includes(extension)) {
+      setUpload({
+        kind: 'error',
+        message:
+          LEGACY_BINARY_FORMATS[extension] ??
+          `${extension || 'That file'} is not a supported format. ${describeSupportedFormats()}`,
+      });
+      return;
+    }
+
+    if (file.size === 0) {
+      setUpload({ kind: 'error', message: `"${file.name}" is empty.` });
+      return;
+    }
+
     if (file.size > MAX_UPLOAD_BYTES) {
-      setError(
-        `"${file.name}" is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`,
-      );
-      setStatus('error');
+      setUpload({
+        kind: 'error',
+        message: `"${file.name}" is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`,
+      });
       return;
     }
 
     setUploading(true);
-    setUploadNotice(null);
-    setError(null);
+    // Names the slow part rather than saying "uploading": sending the bytes is
+    // near-instant on a 10 MB cap, and the wait the user is actually sitting
+    // through is extraction and one embedding call per chunk.
+    setUpload({ kind: 'working', message: `Reading "${file.name}" and indexing its contents…` });
 
     void uploadDocument(file)
       .then((document) => {
         // "Indexed" rather than "uploaded": the request only returns once
         // extraction, chunking and embedding have finished, so by this point
         // the document really is searchable.
-        setUploadNotice(`"${document.title}" is indexed and ready to ask about.`);
+        setUpload({
+          kind: 'done',
+          message: `"${document.title}" is indexed — ${document.chunkCount} passage${document.chunkCount === 1 ? '' : 's'} ready to ask about.`,
+        });
         setReloadKey((key) => key + 1);
       })
       .catch((caught: unknown) => {
-        setError(caught instanceof Error ? caught.message : 'Could not upload that file.');
-        setStatus('error');
+        /**
+         * The server's message is shown verbatim, and that is the point of the
+         * whole change. It already names the stage that failed — "Not a valid
+         * .xlsx workbook", "The file is not valid JSON: ...", "has no text
+         * layer. It is most likely a scan" — so replacing it with wording of
+         * our own could only make it vaguer.
+         */
+        setUpload({
+          kind: 'error',
+          message: caught instanceof Error ? caught.message : 'Could not upload that file.',
+        });
       })
       .finally(() => setUploading(false));
   }, []);
@@ -506,21 +557,42 @@ export function Chat({ inferenceDisabled = false }: ChatProps) {
           </div>
         )}
 
-        {uploadNotice !== null && (
+        {upload !== null && (
           <div className="mx-auto w-full max-w-3xl px-4 pb-2">
             <p
-              role="status"
-              className="flex items-start justify-between gap-3 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-200"
+              // Progress is announced politely; a failure interrupts, because a
+              // screen-reader user who just attached a file needs to know it
+              // was refused rather than discover it in the silence afterwards.
+              role={upload.kind === 'error' ? 'alert' : 'status'}
+              className={
+                'flex items-start justify-between gap-3 rounded-xl border px-4 py-3 text-sm ' +
+                (upload.kind === 'error'
+                  ? 'border-red-300 bg-red-50 text-red-900 dark:border-red-700/60 dark:bg-red-950/40 dark:text-red-200'
+                  : 'border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-200')
+              }
             >
-              <span>{uploadNotice}</span>
-              <button
-                type="button"
-                onClick={() => setUploadNotice(null)}
-                aria-label="Dismiss"
-                className="shrink-0 text-emerald-700 hover:text-emerald-900 dark:text-emerald-400 dark:hover:text-emerald-200"
-              >
-                ×
-              </button>
+              <span className="flex items-start gap-2">
+                {upload.kind === 'working' && (
+                  <span
+                    aria-hidden="true"
+                    className="mt-0.5 size-3.5 shrink-0 animate-spin rounded-full border-2 border-emerald-600 border-t-transparent dark:border-emerald-400 dark:border-t-transparent"
+                  />
+                )}
+                <span>{upload.message}</span>
+              </span>
+              {/* A spinner with a dismiss button implies the work can be
+                  cancelled, which it cannot — so it only appears once the
+                  upload has finished one way or the other. */}
+              {upload.kind !== 'working' && (
+                <button
+                  type="button"
+                  onClick={() => setUpload(null)}
+                  aria-label="Dismiss"
+                  className="shrink-0 opacity-70 hover:opacity-100"
+                >
+                  ×
+                </button>
+              )}
             </p>
           </div>
         )}

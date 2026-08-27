@@ -23,12 +23,19 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { crc32 } from 'node:zlib';
 
 import { signIn } from '../src/lib/auth.ts';
 import { createAuthedClient, isAuthConfigured } from '../src/lib/supabase/authed.ts';
 import { getSupabaseAdminClient, isSupabaseConfigured } from '../src/lib/supabase/server.ts';
 import { SUPPORTED_EXTENSIONS } from '../src/lib/ingest/extract.ts';
+import {
+  EXTENSION_TO_SOURCE_TYPE,
+  LEGACY_BINARY_FORMATS,
+} from '../src/lib/ingest/formats.ts';
+import { ACCEPTED_EXTENSIONS } from '../src/lib/documents-client.ts';
+import { UPLOAD_EXTENSIONS } from '../src/lib/documents.ts';
+import { DOCUMENT_SOURCE_TYPES } from '../src/types/database.ts';
+import { buildDocx, buildPdf, buildXlsx, corrupt } from './fixtures/documents.ts';
 import { isInferenceDisabled } from '../src/lib/inference-mode.ts';
 import { loadEnvLocal } from './_env.ts';
 
@@ -57,140 +64,16 @@ function summary(): void {
 const BASE_URL = (process.env.EVAL_BASE_URL ?? 'http://localhost:3000').replace(/\/$/, '');
 
 // ---------------------------------------------------------------------------
-// File fixtures, built byte-exactly in memory
+// File fixtures
 // ---------------------------------------------------------------------------
-
-/**
- * A ZIP with stored (uncompressed) entries.
- *
- * Enough to make a valid DOCX: the format is a ZIP of XML parts, and
- * compression is optional. Stored entries keep this readable and make the
- * offsets easy to get right.
- */
-function buildZip(entries: { name: string; content: string }[]): Buffer {
-  const locals: Buffer[] = [];
-  const centrals: Buffer[] = [];
-  let offset = 0;
-
-  for (const entry of entries) {
-    const nameBuf = Buffer.from(entry.name, 'utf8');
-    const dataBuf = Buffer.from(entry.content, 'utf8');
-    const sum = crc32(dataBuf);
-
-    const local = Buffer.alloc(30 + nameBuf.length);
-    local.writeUInt32LE(0x04034b50, 0); // local file header signature
-    local.writeUInt16LE(20, 4); // version needed
-    local.writeUInt16LE(0, 6); // flags
-    local.writeUInt16LE(0, 8); // method: stored
-    local.writeUInt16LE(0, 10); // mod time
-    local.writeUInt16LE(0x21, 12); // mod date (arbitrary, valid)
-    local.writeUInt32LE(sum, 14);
-    local.writeUInt32LE(dataBuf.length, 18);
-    local.writeUInt32LE(dataBuf.length, 22);
-    local.writeUInt16LE(nameBuf.length, 26);
-    local.writeUInt16LE(0, 28);
-    nameBuf.copy(local, 30);
-
-    const central = Buffer.alloc(46 + nameBuf.length);
-    central.writeUInt32LE(0x02014b50, 0); // central directory signature
-    central.writeUInt16LE(20, 4);
-    central.writeUInt16LE(20, 6);
-    central.writeUInt16LE(0, 8);
-    central.writeUInt16LE(0, 10);
-    central.writeUInt16LE(0, 12);
-    central.writeUInt16LE(0x21, 14);
-    central.writeUInt32LE(sum, 16);
-    central.writeUInt32LE(dataBuf.length, 20);
-    central.writeUInt32LE(dataBuf.length, 24);
-    central.writeUInt16LE(nameBuf.length, 28);
-    central.writeUInt16LE(0, 30);
-    central.writeUInt16LE(0, 32);
-    central.writeUInt16LE(0, 34);
-    central.writeUInt16LE(0, 36);
-    central.writeUInt32LE(0, 38);
-    central.writeUInt32LE(offset, 42);
-    nameBuf.copy(central, 46);
-
-    locals.push(local, dataBuf);
-    centrals.push(central);
-    offset += local.length + dataBuf.length;
-  }
-
-  const centralBuf = Buffer.concat(centrals);
-  const end = Buffer.alloc(22);
-  end.writeUInt32LE(0x06054b50, 0); // end of central directory
-  end.writeUInt16LE(0, 4);
-  end.writeUInt16LE(0, 6);
-  end.writeUInt16LE(entries.length, 8);
-  end.writeUInt16LE(entries.length, 10);
-  end.writeUInt32LE(centralBuf.length, 12);
-  end.writeUInt32LE(offset, 16);
-  end.writeUInt16LE(0, 20);
-
-  return Buffer.concat([...locals, centralBuf, end]);
-}
-
-function buildDocx(paragraphs: string[]): Buffer {
-  const body = paragraphs
-    .map((p) => `<w:p><w:r><w:t xml:space="preserve">${p}</w:t></w:r></w:p>`)
-    .join('');
-
-  return buildZip([
-    {
-      name: '[Content_Types].xml',
-      content:
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
-        '<Default Extension="xml" ContentType="application/xml"/>' +
-        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
-        '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
-        '</Types>',
-    },
-    {
-      name: '_rels/.rels',
-      content:
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
-        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>' +
-        '</Relationships>',
-    },
-    {
-      name: 'word/document.xml',
-      content:
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
-        `<w:body>${body}</w:body></w:document>`,
-    },
-  ]);
-}
-
-/** A single-page PDF with a real xref table, so byte offsets must be correct. */
-function buildPdf(line: string): Buffer {
-  const escaped = line.replace(/([\\()])/g, '\\$1');
-  const stream = `BT /F1 12 Tf 72 720 Td (${escaped}) Tj ET`;
-
-  const objects = [
-    '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
-    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-  ];
-
-  let pdf = '%PDF-1.4\n';
-  const offsets: number[] = [];
-  objects.forEach((body, i) => {
-    offsets.push(pdf.length);
-    pdf += `${i + 1} 0 obj\n${body}\nendobj\n`;
-  });
-
-  const xrefStart = pdf.length;
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  for (const offset of offsets) pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`;
-
-  return Buffer.from(pdf, 'latin1');
-}
+//
+// These used to be built here — a ZIP writer, a DOCX writer and a PDF writer,
+// all local to this file. They moved to `scripts/fixtures/documents.ts` when
+// multi-format support arrived, because a second suite needed the same builders
+// and a copied byte-level format writer is a copy that drifts silently: a fix
+// to one CRC calculation would leave the other quietly producing files no
+// parser accepts. The builders are unchanged in substance, and now cover
+// XLSX and the deliberately corrupt variants as well.
 
 // ---------------------------------------------------------------------------
 
@@ -306,7 +189,19 @@ function verifyUploadUi(): void {
     !/fetch\(['"`]\/api\/documents/.test(chat),
     '  rather than a second upload path of its own',
   );
-  check(/uploadNotice/.test(chat), '  and confirms when a document is indexed');
+  /**
+   * The upload's outcome must be reported in all three of its states, and it
+   * must not be reported through the CHAT's error state — which is what used to
+   * happen: a rejected file called `setStatus('error')` and the user was shown
+   * "Could not generate a reply" about a document they had just attached.
+   */
+  check(/kind: 'working'/.test(chat), '  and shows progress while extracting and indexing');
+  check(/kind: 'done'/.test(chat), '  and confirms when a document is indexed');
+  check(/kind: 'error'/.test(chat), '  and reports an extraction failure');
+  check(
+    !/setStatus\('error'\)/.test(chat.slice(chat.indexOf('handleAttach'), chat.indexOf('attachDisabledReason'))),
+    '  without putting the CHAT into an error state over a file',
+  );
   check(/DocumentPanel/.test(chat), 'the document library is still rendered');
   check(
     /Sign in to upload documents/.test(chat),
@@ -315,19 +210,55 @@ function verifyUploadUi(): void {
 
   console.log('\n-- The picker offers exactly what the backend accepts ---------------');
 
-  const accepted = (client.match(/ACCEPTED_EXTENSIONS = \[([^\]]*)\]/)?.[1] ?? '')
-    .split(',')
-    .map((entry) => entry.trim().replace(/['"]/g, ''))
-    .filter((entry) => entry.length > 0);
+  /**
+   * Compared as VALUES, not as source text.
+   *
+   * This used to scrape `ACCEPTED_EXTENSIONS = [...]` out of the client file
+   * with a regex, and that was testing the wrong pair. It compared the picker
+   * against the EXTRACTOR's list while the gate that actually rejects uploads
+   * is `UPLOAD_EXTENSIONS` in `documents.ts` — which at the time held three
+   * entries against the picker's nine. The suite passed while the picker
+   * offered six formats the upload route refused with a 415.
+   *
+   * All three lists are imported and compared directly now. They resolve to the
+   * same array today; asserting it keeps them that way if anyone re-introduces
+   * a copy, and the regex can no longer pass by matching a list nobody enforces.
+   */
+  const accepted = [...ACCEPTED_EXTENSIONS];
 
   check(accepted.length > 0, 'the client declares an accept list', accepted.join(' '));
   for (const extension of SUPPORTED_EXTENSIONS) {
-    check(accepted.includes(extension), `  the picker offers ${extension}, which the backend supports`);
+    check(accepted.includes(extension), `  the picker offers ${extension}, which the extractor supports`);
   }
   for (const offered of accepted) {
     check(
       SUPPORTED_EXTENSIONS.includes(offered),
-      `  it offers nothing the backend would reject (${offered})`,
+      `  it offers nothing the extractor would reject (${offered})`,
+    );
+  }
+
+  // The list that actually returns 415 — the one the old test never looked at.
+  for (const offered of accepted) {
+    check(
+      (UPLOAD_EXTENSIONS as readonly string[]).includes(offered),
+      `  the UPLOAD ROUTE accepts ${offered}, so the picker is not advertising a 415`,
+    );
+  }
+  for (const gated of UPLOAD_EXTENSIONS) {
+    check(
+      accepted.includes(gated),
+      `  the picker offers ${gated}, so no accepted format is unreachable`,
+    );
+  }
+
+  // Every offered extension must map to a source type the DATABASE will store.
+  // Without this, a format can extract perfectly and still fail at the insert.
+  const storable = new Set(DOCUMENT_SOURCE_TYPES);
+  for (const offered of accepted) {
+    const sourceType = EXTENSION_TO_SOURCE_TYPE[offered];
+    check(
+      sourceType !== undefined && storable.has(sourceType),
+      `  ${offered} maps to a storable source type (${sourceType ?? 'none'})`,
     );
   }
 
@@ -410,7 +341,29 @@ async function main(): Promise<void> {
     return;
   }
 
-  for (const [label, url] of [['the application', `${BASE_URL}/`], ['Ollama', `${process.env.OLLAMA_BASE_URL?.trim() || 'http://localhost:11434'}/api/version`]] as const) {
+  /**
+   * Preconditions, checked against the provider actually configured.
+   *
+   * This used to ping Ollama unconditionally and block the entire suite when it
+   * did not answer. That was correct when Ollama was the only provider and
+   * became wrong the moment Gemini existed: a Gemini deployment has no Ollama
+   * to reach, so a perfectly healthy stack reported `0 passed · 1 blocked`.
+   *
+   * The application's own health endpoint is the right question to ask, because
+   * it reports on whichever provider is configured and is the same signal
+   * production uses. Ollama is pinged only when Ollama is the one in use.
+   */
+  const preconditions: { label: string; url: string }[] = [
+    { label: 'the application', url: `${BASE_URL}/` },
+  ];
+  if ((process.env.LLM_PROVIDER ?? 'ollama').trim().toLowerCase() === 'ollama') {
+    preconditions.push({
+      label: 'Ollama',
+      url: `${process.env.OLLAMA_BASE_URL?.trim() || 'http://localhost:11434'}/api/version`,
+    });
+  }
+
+  for (const { label, url } of preconditions) {
     try {
       const ping = await fetch(url, { signal: AbortSignal.timeout(5_000) });
       if (!ping.ok) throw new Error(String(ping.status));
@@ -419,6 +372,33 @@ async function main(): Promise<void> {
       summary();
       return;
     }
+  }
+
+  /**
+   * The server's inference must be up, whatever it is.
+   *
+   * Weaker than the old Ollama ping in the sense that it names no provider, and
+   * stronger in the sense that it asks the SERVER whether it can actually
+   * embed — which is what every upload below depends on. A stack that answers
+   * this with `llm: unavailable` would otherwise produce a page of failures
+   * that all say "embedding failed" and none of which are about documents.
+   */
+  try {
+    const health = (await (await fetch(`${BASE_URL}/api/health`, {
+      signal: AbortSignal.timeout(10_000),
+    })).json()) as { llm?: string; database?: string };
+    if (health.llm !== 'available' || health.database !== 'available') {
+      block(
+        'the server reports a dependency down',
+        `llm=${health.llm} database=${health.database}`,
+      );
+      summary();
+      return;
+    }
+  } catch {
+    block('the health endpoint did not answer', `${BASE_URL}/api/health`);
+    summary();
+    return;
   }
 
   const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -601,13 +581,309 @@ async function main(): Promise<void> {
       check(/SV-2210|clock|drift|stratum/i.test(docxAnswer.answer), 'DOCX content is retrievable and answerable', JSON.stringify(docxAnswer.answer.slice(0, 70)));
     }
 
-    const pdfBuf = buildPdf('The Kingfisher probe reports code KF-9931 on calibration failure.');
+    const pdfBuf = buildPdf(['The Kingfisher probe reports code KF-9931 on calibration failure.']);
     const pdfUp = await alice.upload('kingfisher.pdf', pdfBuf);
     if (pdfUp.status === 201) {
       check(true, 'a real PDF uploads and processes', `${pdfUp.body.document?.chunkCount} chunk(s)`);
     } else {
       check(false, 'a real PDF uploads and processes', `HTTP ${pdfUp.status} ${pdfUp.body.error ?? ''}`);
     }
+
+    // --- Every supported format, end to end ---------------------------------
+    /**
+     * The claim under test is NOT "the upload endpoint returned 201".
+     *
+     * A 201 proves bytes were accepted. It says nothing about whether the text
+     * came out intact, whether it was chunked into anything meaningful, whether
+     * the embedding described it, or whether a question can reach it again. A
+     * format can return 201 for every upload and still be useless — an XLSX
+     * read as UTF-8 would store a page of ZIP header bytes and report success.
+     *
+     * So each format carries a fact that exists nowhere else in the corpus, in
+     * the codebase, or in the model's training data — invented identifiers like
+     * "QR-4417" paired with invented nouns. The document is uploaded, then the
+     * fact is asked for. Getting it back proves the whole chain ran: extraction
+     * produced the right text, chunking kept the fact intact, the embedding put
+     * it near the question, retrieval found it, and the model was given it.
+     *
+     * The citation is checked against the document id as well, because an
+     * answer citing the wrong document is a different bug that a text match
+     * alone would not catch.
+     */
+    console.log('\n-- Every supported format, end to end -----------------------------');
+
+    const formatCases: {
+      filename: string;
+      bytes: Buffer;
+      question: string;
+      expect: RegExp;
+      note: string;
+    }[] = [
+      {
+        filename: 'quarry.txt',
+        bytes: Buffer.from(
+          'Quarry Notes\n\nThe Tamsin quarry uses permit QR-4417 for night extraction.\n' +
+            'Permit QR-4417 was issued by the Vale district office.',
+          'utf8',
+        ),
+        question: 'Which permit does the Tamsin quarry use for night extraction?',
+        expect: /QR-4417/i,
+        note: 'plain text',
+      },
+      {
+        filename: 'harbour.md',
+        bytes: Buffer.from(
+          '# Harbour Manual\n\n## Berthing\n\nThe Ellsmere berth is rated for vessels up to ' +
+            'HD-8802 tonnage class.\n\nExceeding HD-8802 requires the harbourmaster to sign off.',
+          'utf8',
+        ),
+        question: 'What tonnage class is the Ellsmere berth rated for?',
+        expect: /HD-8802/i,
+        note: 'markdown',
+      },
+      {
+        filename: 'lantern.html',
+        bytes: Buffer.from(
+          '<html><head><title>Lantern Spec</title></head><body>' +
+            '<script>window.stolen = "SCRIPTLEAK-9001";</script>' +
+            '<style>.x { color: red; }</style>' +
+            '<h1>Lantern Spec</h1>' +
+            '<p>The Kelvedon lantern draws LM-5150 watts at full output.</p>' +
+            '<p>Dimming below LM-5150 extends the emitter life.</p>' +
+            '</body></html>',
+          'utf8',
+        ),
+        question: 'How many watts does the Kelvedon lantern draw at full output?',
+        expect: /LM-5150/i,
+        note: 'html',
+      },
+      {
+        filename: 'kingfisher2.pdf',
+        bytes: buildPdf([
+          'Kingfisher Field Report',
+          'The Marlow sensor array returns fault PX-6633 when the housing floods.',
+          'Fault PX-6633 clears once the housing is drained and resealed.',
+        ]),
+        question: 'What fault does the Marlow sensor array return when the housing floods?',
+        expect: /PX-6633/i,
+        note: 'pdf',
+      },
+      {
+        filename: 'roster.docx',
+        bytes: buildDocx(
+          ['Ridgeway Staff Roster', 'The roster below is current for this quarter.'],
+          [
+            ['Name', 'Badge', 'Role'],
+            ['Perrin Vale', 'BG-7719', 'Night Warden'],
+            ['Osgood Finn', 'BG-2204', 'Signals Officer'],
+          ],
+        ),
+        question: 'What is Perrin Vale\'s badge number and role?',
+        expect: /BG-7719|night warden/i,
+        note: 'docx with a table',
+      },
+      {
+        filename: 'inventory.xlsx',
+        bytes: buildXlsx([
+          {
+            name: 'Depot Stock',
+            rows: [
+              ['Item', 'Code', 'Quantity'],
+              ['Brake shoe', 'ZT-3390', '48'],
+              ['Coupling pin', 'ZT-1145', '12'],
+            ],
+          },
+        ]),
+        question: 'What is the code for the brake shoe in the depot stock?',
+        expect: /ZT-3390/i,
+        note: 'xlsx with a shared-string table',
+      },
+      {
+        filename: 'contacts.csv',
+        bytes: Buffer.from(
+          'Name,Extension,Department\n' +
+            'Marisol Quint,EX-9042,Hydrology\n' +
+            '"Bracken, Ivo",EX-3318,Geodesy\n',
+          'utf8',
+        ),
+        question: 'What is Marisol Quint\'s extension?',
+        expect: /EX-9042/i,
+        note: 'csv, including a quoted field containing a comma',
+      },
+      {
+        filename: 'settings.json',
+        bytes: Buffer.from(
+          JSON.stringify(
+            {
+              service: 'thornfield-relay',
+              deployment: { region: 'north-vale', buildTag: 'TF-2288' },
+              maintainers: [{ name: 'Alder Reyne', pager: 'PG-6070' }],
+            },
+            null,
+            2,
+          ),
+          'utf8',
+        ),
+        question: 'What is the build tag for the thornfield-relay deployment?',
+        expect: /TF-2288/i,
+        note: 'json with nesting and an array of objects',
+      },
+    ];
+
+    const formatOutcomes: { note: string; uploaded: boolean; answered: boolean }[] = [];
+
+    for (const testCase of formatCases) {
+      const uploaded = await alice.upload(testCase.filename, testCase.bytes);
+      const ok201 = uploaded.status === 201;
+      check(
+        ok201,
+        `${testCase.filename} uploads and processes (${testCase.note})`,
+        ok201
+          ? `${uploaded.body.document?.chunkCount} chunk(s)`
+          : `HTTP ${uploaded.status} ${uploaded.body.error ?? ''}`,
+      );
+
+      if (!ok201) {
+        formatOutcomes.push({ note: testCase.note, uploaded: false, answered: false });
+        continue;
+      }
+
+      check(
+        (uploaded.body.document?.chunkCount ?? 0) > 0,
+        `  ${testCase.filename} produced at least one chunk`,
+        `${uploaded.body.document?.chunkCount}`,
+      );
+
+      const documentId = uploaded.body.document?.id ?? '';
+
+      // Chunks exist in the database with a real embedding, not a null column.
+      const stored = await admin
+        .from('chunks')
+        .select('id, embedding')
+        .eq('document_id', documentId);
+      const embedded = (stored.data ?? []).filter((row) => row.embedding !== null).length;
+      check(
+        embedded > 0 && embedded === (stored.data ?? []).length,
+        `  every chunk of ${testCase.filename} carries an embedding`,
+        `${embedded}/${(stored.data ?? []).length}`,
+      );
+
+      const answer = await alice.ask(testCase.question);
+      const answered = testCase.expect.test(answer.answer);
+      check(
+        answered,
+        `  the fact from ${testCase.filename} is retrievable and answered`,
+        JSON.stringify(answer.answer.slice(0, 90)),
+      );
+      check(
+        answer.sources.some((source) => source.documentId === documentId),
+        `  the citation points back to ${testCase.filename}`,
+        `${answer.sources.length} source(s)`,
+      );
+
+      formatOutcomes.push({ note: testCase.note, uploaded: true, answered });
+    }
+
+    console.log('\n   format summary:');
+    for (const outcome of formatOutcomes) {
+      const verdict = outcome.uploaded && outcome.answered ? 'end-to-end' : outcome.uploaded ? 'uploaded, NOT answered' : 'FAILED';
+      console.log(`     ${outcome.note.padEnd(38)} ${verdict}`);
+    }
+
+    // --- Malformed input for every parser ------------------------------------
+    /**
+     * Each of these keeps the magic bytes of a real file of its type, so type
+     * detection succeeds and the failure has to be produced by the PARSER. A
+     * blob of random bytes would be rejected earlier and would prove nothing
+     * about the code under test.
+     *
+     * The assertion is 4xx rather than merely "not 201": a corrupt upload is
+     * the user's problem to see and fix, and a 500 would both hide that and
+     * imply the server broke.
+     */
+    console.log('\n-- Malformed files fail as 4xx, never 500 -------------------------');
+
+    const malformed: { filename: string; bytes: Buffer; note: string }[] = [
+      { filename: 'broken2.pdf', bytes: corrupt.pdf(), note: 'PDF with a wrecked object graph' },
+      { filename: 'broken2.docx', bytes: corrupt.docx(), note: 'ZIP with no word/document.xml' },
+      { filename: 'broken.xlsx', bytes: corrupt.xlsx(), note: 'ZIP with no xl/workbook.xml' },
+      { filename: 'broken.json', bytes: corrupt.json(), note: 'syntactically invalid JSON' },
+      { filename: 'truncated.xlsx', bytes: corrupt.truncatedZip(), note: 'truncated ZIP' },
+    ];
+
+    for (const bad of malformed) {
+      const response = await alice.upload(bad.filename, bad.bytes);
+      check(
+        response.status >= 400 && response.status < 500,
+        `${bad.note} is refused with 4xx`,
+        `HTTP ${response.status}`,
+      );
+      check(
+        typeof response.body.error === 'string' && response.body.error.length > 0,
+        `  and says why`,
+        JSON.stringify((response.body.error ?? '').slice(0, 80)),
+      );
+      // A refused upload must not leave a half-built document behind.
+      const orphan = await admin.from('documents').select('id').eq('source_url', bad.filename);
+      check(
+        (orphan.data ?? []).length === 0,
+        `  and stores nothing`,
+        `${(orphan.data ?? []).length} row(s)`,
+      );
+    }
+
+    // --- Formats that are recognised and refused -----------------------------
+    console.log('\n-- Legacy binaries are refused with instructions -------------------');
+
+    for (const [extension, advice] of Object.entries(LEGACY_BINARY_FORMATS)) {
+      const response = await alice.upload(`legacy${extension}`, Buffer.from('anything', 'utf8'));
+      check(
+        response.status === 415,
+        `${extension} is refused with 415`,
+        `HTTP ${response.status}`,
+      );
+      // The generic list would be useless here; the point is that the message
+      // tells the user how to convert the file.
+      check(
+        (response.body.error ?? '').includes(advice.slice(0, 40)),
+        `  and explains how to convert it rather than listing extensions`,
+        JSON.stringify((response.body.error ?? '').slice(0, 70)),
+      );
+    }
+
+    // --- Size and emptiness --------------------------------------------------
+    console.log('\n-- Size and emptiness ---------------------------------------------');
+
+    const oversized = await alice.upload(
+      'huge.txt',
+      Buffer.alloc(11 * 1024 * 1024, 'a'),
+    );
+    check(
+      oversized.status === 413 || oversized.status === 400,
+      'an oversized file is refused before it is parsed',
+      `HTTP ${oversized.status}`,
+    );
+
+    const emptyFile = await alice.upload('nothing.txt', Buffer.alloc(0));
+    check(
+      emptyFile.status >= 400 && emptyFile.status < 500,
+      'an empty file is refused',
+      `HTTP ${emptyFile.status}`,
+    );
+
+    const whitespaceOnly = await alice.upload('blank.txt', Buffer.from('   \n\n  \t ', 'utf8'));
+    check(
+      whitespaceOnly.status >= 400 && whitespaceOnly.status < 500,
+      'a file of only whitespace is refused as having no text',
+      `HTTP ${whitespaceOnly.status}`,
+    );
+
+    const unsupported = await alice.upload('payload.exe', Buffer.from('MZ\x90\x00', 'latin1'));
+    check(
+      unsupported.status === 415,
+      'an unsupported extension is refused with 415, never silently accepted',
+      `HTTP ${unsupported.status}`,
+    );
 
     // --- 13. Cascade ---------------------------------------------------------
     console.log('\n-- Deleting a document removes its chunks ------------------------');

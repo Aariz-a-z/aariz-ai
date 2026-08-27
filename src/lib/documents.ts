@@ -17,6 +17,11 @@
  * Server-only.
  */
 
+import {
+  LEGACY_BINARY_FORMATS,
+  SUPPORTED_EXTENSIONS,
+  fileExtension,
+} from './ingest/formats.ts';
 import { ingestBuffer } from './ingest/pipeline.ts';
 import { createAuthedClient } from './supabase/authed.ts';
 import type { DocumentRow, DocumentSourceType, DocumentStatus } from '../types/database.ts';
@@ -34,12 +39,17 @@ export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 /**
  * Formats accepted over HTTP.
  *
- * Deliberately narrower than what the extractor supports: Markdown and HTML
- * remain available through the CLI, but an upload endpoint should accept the
- * smallest set that meets the requirement rather than everything that happens
- * to parse.
+ * Now exactly what the extractor can read, and derived from the same registry
+ * the file picker uses rather than written out again here.
+ *
+ * It used to be the narrower list `['.pdf', '.docx', '.txt']`, on the reasoning
+ * that an upload endpoint should accept the smallest set that meets the
+ * requirement. That reasoning had a cost nobody had noticed: the picker offered
+ * nine extensions, so a user could select a `.md` file the extractor handles
+ * perfectly and get back a 415 from this check. Two lists, two intentions, one
+ * confused user. There is one list now, in `formats.ts`, and both ends read it.
  */
-export const UPLOAD_EXTENSIONS = ['.pdf', '.docx', '.txt'] as const;
+export const UPLOAD_EXTENSIONS = SUPPORTED_EXTENSIONS;
 
 export type DocumentErrorCode =
   | 'unauthenticated'
@@ -149,10 +159,9 @@ export async function deleteDocument(
   return (data ?? []).length > 0;
 }
 
-function fileExtension(filename: string): string {
-  const dot = filename.lastIndexOf('.');
-  return dot === -1 ? '' : filename.slice(dot).toLowerCase();
-}
+// Shared with the client so both ends split a filename identically. The local
+// copy also mishandled a path: it took the last dot of the WHOLE string, so
+// "docs.v2/notes" reported ".v2/notes" as an extension.
 
 /**
  * Validate and ingest an uploaded file.
@@ -174,6 +183,14 @@ export async function uploadDocument(
 
   const extension = fileExtension(filename);
   if (!(UPLOAD_EXTENSIONS as readonly string[]).includes(extension)) {
+    /**
+     * `.doc` and `.xls` are refused with instructions rather than a list.
+     * Someone uploading a Word document has a fixable problem, and repeating
+     * twelve extensions at them does not identify it; "save it as .docx" does.
+     */
+    const legacy = LEGACY_BINARY_FORMATS[extension];
+    if (legacy) throw new DocumentError('unsupported_type', legacy, 415);
+
     throw new DocumentError(
       'unsupported_type',
       `Unsupported file type "${extension || filename}". Accepted: ${UPLOAD_EXTENSIONS.join(', ')}.`,

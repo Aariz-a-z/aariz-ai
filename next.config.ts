@@ -177,19 +177,26 @@ function securityHeaders(isDev: boolean, options: SecurityHeaderOptions = {}) {
 
 const nextConfig: NextConfig = {
   /**
-   * Keep `pdf-parse` out of the server bundle.
+   * NO server externals.
    *
-   * It wraps `pdfjs-dist`, which loads `pdf.worker.mjs` from a path relative to
-   * its own package at runtime. Bundling rewrites that layout, so the worker is
-   * looked for under `.next/dev/server/chunks/` and every PDF upload fails with
-   * "Setting up fake worker failed". Leaving the package external lets Node
-   * resolve it from `node_modules` the way the library expects.
+   * This used to carry `serverExternalPackages: ["pdf-parse"]`, to stop the
+   * bundler rewriting the layout `pdfjs-dist` needs in order to find its worker
+   * at runtime. That worked locally and was implicated in the deployed failure:
    *
-   * This never showed up before because Level 6 only ever parsed PDFs from the
-   * CLI, which runs in plain Node with no bundler involved. It appeared the
-   * moment PDFs started arriving through an HTTP route.
+   *     Failed to load external module pdf-parse
+   *     ReferenceError: DOMMatrix is not defined
+   *
+   * An externalised package is not bundled, so the runtime has to resolve it
+   * from `node_modules` — which depends on a serverless build tracing every
+   * file it needs, and on the host providing the browser globals pdfjs reaches
+   * for. Neither held.
+   *
+   * `unpdf` replaced it precisely because it needs no such exception: it ships
+   * a build of pdfjs for non-browser runtimes with those globals supplied
+   * internally, and it bundles. Removing the escape hatch is part of the fix,
+   * not tidying afterwards — leaving it would preserve the fragile loading
+   * arrangement for the next package that lands here.
    */
-  serverExternalPackages: ["pdf-parse"],
 
   /**
    * Level 16: stop advertising the framework and its version.
