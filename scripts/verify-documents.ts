@@ -636,7 +636,60 @@ async function main(): Promise<void> {
         ),
         question: 'What tonnage class is the Ellsmere berth rated for?',
         expect: /HD-8802/i,
-        note: 'markdown',
+        note: 'markdown (.md)',
+      },
+      /**
+       * The alias extensions, tested as extensions rather than assumed.
+       *
+       * `.markdown`, `.mdx` and `.htm` map to source types already covered by
+       * `.md` and `.html`, so it is tempting to treat them as the same case.
+       * They are not: an extension has to survive `fileExtension`, the picker's
+       * accept list, the upload route's allow list and `EXTENSION_TO_SOURCE_TYPE`
+       * before it ever reaches a parser, and every one of those is a separate
+       * lookup that can be missing an entry. `.markdown`, `.text` and `.htm`
+       * were the exact three left out of the picker once before.
+       */
+      {
+        filename: 'foundry.markdown',
+        bytes: Buffer.from(
+          '# Foundry Notes\n\nThe Calder foundry pours alloy grade FD-7350 on Tuesdays.',
+          'utf8',
+        ),
+        question: 'Which alloy grade does the Calder foundry pour?',
+        expect: /FD-7350/i,
+        note: 'markdown (.markdown)',
+      },
+      {
+        filename: 'orchard.mdx',
+        bytes: Buffer.from(
+          '# Orchard Register\n\nThe Marlowe orchard is registered under holding MX-6612.',
+          'utf8',
+        ),
+        question: 'Under which holding is the Marlowe orchard registered?',
+        expect: /MX-6612/i,
+        note: 'markdown (.mdx)',
+      },
+      {
+        filename: 'signal.htm',
+        bytes: Buffer.from(
+          '<html><head><title>Signal Box</title></head><body>' +
+            '<h1>Signal Box</h1><p>The Denby signal box uses interlocking type SB-4471.</p>' +
+            '</body></html>',
+          'utf8',
+        ),
+        question: 'What interlocking type does the Denby signal box use?',
+        expect: /SB-4471/i,
+        note: 'html (.htm)',
+      },
+      {
+        filename: 'ledger.text',
+        bytes: Buffer.from(
+          'Ledger Notes\n\nThe Whitmore ledger is reconciled against account WM-2093.',
+          'utf8',
+        ),
+        question: 'Which account is the Whitmore ledger reconciled against?',
+        expect: /WM-2093/i,
+        note: 'plain text (.text)',
       },
       {
         filename: 'lantern.html',
