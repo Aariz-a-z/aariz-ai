@@ -34,7 +34,8 @@
     "verify:deployment": "node --experimental-strip-types scripts/verify-deployment.ts",
     "verify:gemini": "node --experimental-strip-types scripts/verify-gemini.ts",
     "demo": "node --experimental-strip-types scripts/demo-server.ts",
-    "verify:grounding": "node --experimental-strip-types scripts/verify-grounding.ts"
+    "verify:grounding": "node --experimental-strip-types scripts/verify-grounding.ts",
+    "verify:ocr": "node --experimental-strip-types scripts/verify-ocr.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",

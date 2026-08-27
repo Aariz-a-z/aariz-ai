@@ -23,6 +23,7 @@
  * retrieval needs.
  */
 
+import { MAX_EXTRACTED_CHARS } from '../limits.ts';
 import { CfbError, readCfb } from './cfb.ts';
 
 export class LegacyOfficeError extends Error {
@@ -33,7 +34,7 @@ export class LegacyOfficeError extends Error {
 }
 
 /** Ceiling on extracted text, matching the structured formats. */
-const MAX_CHARS = 2_000_000;
+const MAX_CHARS = MAX_EXTRACTED_CHARS;
 
 // =============================================================================
 // Shared

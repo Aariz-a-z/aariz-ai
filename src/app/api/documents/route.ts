@@ -22,7 +22,7 @@ import {
   enforceRateLimit,
   tooManyRequests,
 } from '@/lib/rate-limit';
-import { DocumentError, MAX_UPLOAD_BYTES, listDocuments, uploadDocument } from '@/lib/documents';
+import { DocumentError, getMaxUploadBytes, listDocuments, uploadDocument } from '@/lib/documents';
 import { enforceSameOrigin, rejectPreflight } from '@/lib/security-headers';
 import { log, newRequestId } from '@/lib/log';
 
@@ -91,7 +91,7 @@ export async function POST(request: Request): Promise<Response> {
 
   // Refuse before reading the body. `formData()` buffers the upload, so the
   // per-file check inside uploadDocument cannot prevent the memory cost.
-  const oversized = checkBodySize(request, MAX_UPLOAD_BYTES);
+  const oversized = checkBodySize(request, getMaxUploadBytes());
   if (oversized !== null) return oversized;
 
   const throttled = enforceRateLimit(request, 'upload', user.id);

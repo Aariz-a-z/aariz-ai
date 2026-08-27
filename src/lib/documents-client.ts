@@ -6,6 +6,8 @@
  * deliberately no `userId` parameter anywhere in this file.
  */
 
+import { DEFAULT_MAX_DOCUMENT_SIZE_MB } from './limits.ts';
+
 export type DocumentStatus = 'pending' | 'processing' | 'ready' | 'failed';
 
 export interface UserDocument {
@@ -50,8 +52,30 @@ export {
   describeSupportedFormats,
 } from './ingest/formats.ts';
 
-/** Mirrors MAX_UPLOAD_BYTES server-side, so the UI can refuse early. */
-export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+/**
+ * The default ceiling, for a client that has not been told the real one.
+ *
+ * This used to be a literal `10 * 1024 * 1024` under a comment saying it
+ * "mirrors MAX_UPLOAD_BYTES server-side". Mirrors drift, and the accepted-
+ * extension list next door proved it by drifting far enough that the picker
+ * offered six formats the upload route refused.
+ *
+ * Both now come from `limits.ts`, and the SERVER passes its resolved value down
+ * as a prop — so an operator who sets MAX_DOCUMENT_SIZE_MB gets that number in
+ * the browser too, without a `NEXT_PUBLIC_` variable publishing configuration
+ * to every visitor. This constant is only the fallback for a component that was
+ * given nothing.
+ *
+ * The browser check is a courtesy either way: it saves a doomed 60 MB upload
+ * from being sent. The server's check is the control.
+ */
+export {
+  DEFAULT_MAX_DOCUMENT_SIZE_MB,
+  megabytesToBytes,
+  resolveMaxDocumentBytes,
+} from './limits.ts';
+
+export const MAX_UPLOAD_BYTES = DEFAULT_MAX_DOCUMENT_SIZE_MB * 1024 * 1024;
 
 /** Returns null when the caller is not signed in, so the UI can hide the panel. */
 export async function listDocuments(signal?: AbortSignal): Promise<UserDocument[] | null> {

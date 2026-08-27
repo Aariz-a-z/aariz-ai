@@ -22,19 +22,31 @@ import {
   SUPPORTED_EXTENSIONS,
   fileExtension,
 } from './ingest/formats.ts';
+import { MAX_DOCUMENT_SIZE_MB_ENV, resolveMaxDocumentBytes } from './limits.ts';
 import { ingestBuffer } from './ingest/pipeline.ts';
 import { createAuthedClient } from './supabase/authed.ts';
 import type { DocumentRow, DocumentSourceType, DocumentStatus } from '../types/database.ts';
 
 /**
- * Upload ceiling.
+ * Upload ceiling, resolved from MAX_DOCUMENT_SIZE_MB.
  *
- * Ten megabytes is far more than the text-bearing documents this pipeline is
- * for, and small enough that a single request cannot exhaust memory on a
- * two-core machine. Level 14 (abuse protection) adds the per-user and per-IP
- * limits around this; this is the per-file bound only.
+ * Defaults to 50 MB — see `src/lib/limits.ts` for why that number and not
+ * another. Level 14's per-user and per-IP limits sit around this; this is the
+ * per-file bound only, and it is no longer the only thing standing between an
+ * upload and memory exhaustion: every parser has its own decompression and
+ * output ceiling, and OCR has a page cap.
  */
-export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+export function getMaxUploadBytes(): number {
+  return resolveMaxDocumentBytes(process.env[MAX_DOCUMENT_SIZE_MB_ENV]);
+}
+
+/**
+ * Kept as a named export because routes and tests import it, but it is now
+ * DERIVED rather than declared. The literal `10 * 1024 * 1024` that used to sit
+ * here also sat in `documents-client.ts` behind a comment promising the two
+ * would stay in step. They are the same number now because there is only one.
+ */
+export const MAX_UPLOAD_BYTES = getMaxUploadBytes();
 
 /**
  * Formats accepted over HTTP.
@@ -201,10 +213,13 @@ export async function uploadDocument(
   if (file.size === 0) {
     throw new DocumentError('invalid_file', 'The file is empty.', 400);
   }
-  if (file.size > MAX_UPLOAD_BYTES) {
+  // Read per call rather than from the module constant: an operator changing
+  // MAX_DOCUMENT_SIZE_MB should not need a redeploy for the SERVER to honour it.
+  const maxBytes = getMaxUploadBytes();
+  if (file.size > maxBytes) {
     throw new DocumentError(
       'too_large',
-      `File is too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`,
+      `File is too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum is ${Math.floor(maxBytes / 1024 / 1024)} MB.`,
       413,
     );
   }

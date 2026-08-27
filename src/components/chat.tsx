@@ -57,9 +57,18 @@ interface ChatProps {
    * should not need to.
    */
   inferenceDisabled?: boolean;
+  /**
+   * Resolved server-side from MAX_DOCUMENT_SIZE_MB. Falls back to the shared
+   * default when absent, which keeps the component usable in isolation (the
+   * embedded widget renders it without a server page).
+   */
+  maxUploadBytes?: number;
 }
 
-export function Chat({ inferenceDisabled = false }: ChatProps) {
+export function Chat({
+  inferenceDisabled = false,
+  maxUploadBytes = MAX_UPLOAD_BYTES,
+}: ChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<ChatStatus>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -414,10 +423,10 @@ export function Chat({ inferenceDisabled = false }: ChatProps) {
       return;
     }
 
-    if (file.size > MAX_UPLOAD_BYTES) {
+    if (file.size > maxUploadBytes) {
       setUpload({
         kind: 'error',
-        message: `"${file.name}" is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`,
+        message: `"${file.name}" is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is ${Math.floor(maxUploadBytes / 1024 / 1024)} MB.`,
       });
       return;
     }
@@ -426,7 +435,44 @@ export function Chat({ inferenceDisabled = false }: ChatProps) {
     // Names the slow part rather than saying "uploading": sending the bytes is
     // near-instant on a 10 MB cap, and the wait the user is actually sitting
     // through is extraction and one embedding call per chunk.
-    setUpload({ kind: 'working', message: `Reading "${file.name}" and indexing its contents…` });
+    /**
+     * Stage progress driven by ELAPSED TIME, not by a fake percentage.
+     *
+     * The upload is one opaque request: the browser cannot see when the bytes
+     * finish arriving, when extraction starts, or when the last chunk is
+     * embedded. A percentage bar would therefore be invented, and an invented
+     * bar that sticks at 80% is worse than no bar at all.
+     *
+     * What the browser CAN state truthfully is how long it has been waiting, so
+     * each message below is a true statement at the moment it appears. The
+     * later ones matter most: a scanned PDF goes to an OCR model and can take
+     * far longer than a text one, and silence during that wait is exactly when
+     * a user concludes the page has frozen and reloads it.
+     */
+    const startedAt = Date.now();
+    const isPdf = extension === '.pdf';
+    const stages: { after: number; message: string }[] = [
+      { after: 0, message: `Uploading "${file.name}"…` },
+      { after: 2_000, message: 'Processing your document…' },
+      ...(isPdf
+        ? [{ after: 9_000, message: 'Reading scanned pages — this can take a little longer…' }]
+        : []),
+      { after: 20_000, message: 'Still working — indexing a large document…' },
+    ];
+
+    let stageIndex = 0;
+    setUpload({ kind: 'working', message: stages[0].message });
+
+    const ticker = setInterval(() => {
+      const elapsed = Date.now() - startedAt;
+      let next = stageIndex;
+      for (let i = stageIndex + 1; i < stages.length; i++) {
+        if (elapsed >= stages[i].after) next = i;
+      }
+      if (next === stageIndex) return;
+      stageIndex = next;
+      setUpload({ kind: 'working', message: stages[stageIndex].message });
+    }, 1_000);
 
     void uploadDocument(file)
       .then((document) => {
@@ -452,8 +498,14 @@ export function Chat({ inferenceDisabled = false }: ChatProps) {
           message: caught instanceof Error ? caught.message : 'Could not upload that file.',
         });
       })
-      .finally(() => setUploading(false));
-  }, []);
+      .finally(() => {
+        clearInterval(ticker);
+        setUploading(false);
+      });
+    // The limit is a dependency: it arrives as a prop, and a callback frozen
+    // with an empty list would keep checking against whatever it was on first
+    // render.
+  }, [maxUploadBytes]);
 
   /**
    * Why the attach button cannot be used, or null when it can.

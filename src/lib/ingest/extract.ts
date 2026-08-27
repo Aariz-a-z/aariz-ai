@@ -26,7 +26,9 @@ import {
   SUPPORTED_EXTENSIONS,
   fileExtension,
 } from './formats.ts';
+import { MIN_TEXT_CHARS_PER_PAGE, MIN_TEXT_CHARS_TOTAL } from '../limits.ts';
 import { LegacyOfficeError, extractDoc, extractXls } from './legacy-office.ts';
+import { OcrError, isOcrAvailable, ocrPdf } from './ocr.ts';
 import {
   StructuredParseError,
   extractCsv,
@@ -178,16 +180,70 @@ async function extractHtml(
  * page footer to the text, which would have been chunked and embedded as if the
  * author had written it.
  */
-async function extractPdf(buffer: Buffer): Promise<{ text: string; pageCount: number | null }> {
+async function extractPdf(
+  buffer: Buffer,
+  options: { signal?: AbortSignal } = {},
+): Promise<{ text: string; pageCount: number | null; usedOcr: boolean }> {
   const { extractText, getDocumentProxy } = await import('unpdf');
   const pdf = await getDocumentProxy(new Uint8Array(buffer));
   const result = await extractText(pdf, { mergePages: true });
 
   const text = Array.isArray(result.text) ? result.text.join('\n\n') : (result.text ?? '');
-  return {
-    text,
-    pageCount: typeof result.totalPages === 'number' ? result.totalPages : null,
-  };
+  const pageCount = typeof result.totalPages === 'number' ? result.totalPages : null;
+
+  if (!needsOcr(text, pageCount)) {
+    return { text, pageCount, usedOcr: false };
+  }
+
+  /**
+   * Not enough text to be a text PDF, so read the pages as images instead.
+   *
+   * The OCR result REPLACES the extracted text rather than being appended to
+   * it. A scanned page often carries a few stray characters — a scanner header,
+   * a stamped page number, a half-finished OCR layer from another tool — and
+   * concatenating those with a full transcription would duplicate content and
+   * interleave it out of order.
+   *
+   * A failure here is not fatal to the whole upload path: it falls through to
+   * the caller's empty-text check, which produces a message about the document
+   * rather than about OCR. That matters because the person holding the file
+   * does not know or care that an OCR stage exists.
+   */
+  if (!isOcrAvailable()) return { text, pageCount, usedOcr: false };
+
+  try {
+    const ocr = await ocrPdf(buffer, pageCount, { signal: options.signal });
+    return { text: ocr.text, pageCount, usedOcr: true };
+  } catch (caught) {
+    if (caught instanceof Error && caught.name === 'AbortError') throw caught;
+    // Surfaced as an ExtractError by the caller. The OCR module's messages are
+    // already user-facing and name no library, provider or stack.
+    if (caught instanceof OcrError && caught.code === 'too_large') throw caught;
+    return { text, pageCount, usedOcr: false };
+  }
+}
+
+/**
+ * Does this PDF need OCR?
+ *
+ * Deliberately not `text.length === 0`. A scanned document frequently yields a
+ * small amount of extractable text that is not its content — a scanner's header
+ * line, a copier's page stamp, an abandoned OCR layer — and a zero check passes
+ * every one of those straight through as a "successful" extraction of nothing
+ * useful.
+ *
+ * Two thresholds, because one does not cover both shapes. A per-page average
+ * catches a long document whose pages are all images; a total-characters floor
+ * catches the single-page case, where an average over one page is just the
+ * count again and a 40-character scanner header would clear any per-page bar
+ * set low enough to be safe.
+ */
+export function needsOcr(text: string, pageCount: number | null): boolean {
+  const meaningful = text.replace(/\s+/g, ' ').trim().length;
+  if (meaningful < MIN_TEXT_CHARS_TOTAL) return true;
+
+  const pages = pageCount && pageCount > 0 ? pageCount : 1;
+  return meaningful / pages < MIN_TEXT_CHARS_PER_PAGE;
 }
 
 /**
@@ -197,7 +253,11 @@ async function extractPdf(buffer: Buffer): Promise<{ text: string; pageCount: nu
  * is read from disk. Uploaded bytes never touch the filesystem, and no uploaded
  * file is executed, evaluated or handed to a shell at any point.
  */
-export async function extractBuffer(buffer: Buffer, filename: string): Promise<ExtractedDocument> {
+export async function extractBuffer(
+  buffer: Buffer,
+  filename: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<ExtractedDocument> {
   const sourceType = detectSourceType(filename);
   const stem = basename(filename, extname(filename));
 
@@ -228,7 +288,7 @@ export async function extractBuffer(buffer: Buffer, filename: string): Promise<E
         break;
       }
       case 'pdf': {
-        const extracted = await extractPdf(buffer);
+        const extracted = await extractPdf(buffer, { signal: options.signal });
         rawText = extracted.text;
         pageCount = extracted.pageCount;
         title = stem;
@@ -282,7 +342,11 @@ export async function extractBuffer(buffer: Buffer, filename: string): Promise<E
      * paths and internal module names. The format and filename are enough for
      * the user, and the detail goes to the server log instead.
      */
-    if (caught instanceof StructuredParseError || caught instanceof LegacyOfficeError) {
+    if (
+      caught instanceof StructuredParseError ||
+      caught instanceof LegacyOfficeError ||
+      caught instanceof OcrError
+    ) {
       throw new ExtractError('parse_failed', caught.message);
     }
     throw new ExtractError(
@@ -300,10 +364,19 @@ export async function extractBuffer(buffer: Buffer, filename: string): Promise<E
      * "is not empty" sends them to look at a document that plainly is not.
      * Every other format that reaches here really is empty.
      */
+    /**
+     * Reaching here for a PDF means BOTH text extraction and OCR found nothing,
+     * so the document genuinely has no readable content — a blank scan, or
+     * pages of an image with no text in it.
+     *
+     * The message no longer mentions OCR or text layers. Those are stages, and
+     * a person holding a PDF cannot act on either word; what they can act on is
+     * knowing the file appears to be empty.
+     */
     throw new ExtractError(
       'empty_document',
       sourceType === 'pdf'
-        ? `${filename} has no text layer. It is most likely a scan, and needs OCR before it can be indexed.`
+        ? `No readable text was found in ${filename}. If it is a scan, check the pages are not blank.`
         : `${filename} contains no extractable text.`,
     );
   }

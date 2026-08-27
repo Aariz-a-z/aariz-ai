@@ -322,7 +322,10 @@ export async function ingestBuffer(
 ): Promise<IngestResult> {
   let extracted: ExtractedDocument;
   try {
-    extracted = await extractBuffer(buffer, filename);
+    // The signal is forwarded because extraction can now make a network call:
+    // a scanned PDF goes to the OCR provider. Without this, a user who closed
+    // the tab would leave that call running to completion.
+    extracted = await extractBuffer(buffer, filename, { signal: options.signal });
   } catch (caught) {
     return {
       file: filename,

@@ -1,4 +1,5 @@
 import { Chat } from '@/components/chat';
+import { getMaxUploadBytes } from '@/lib/documents';
 import { isInferenceDisabled } from '@/lib/inference-mode';
 
 /**
@@ -27,5 +28,17 @@ import { isInferenceDisabled } from '@/lib/inference-mode';
 export const dynamic = 'force-dynamic';
 
 export default function Home() {
-  return <Chat inferenceDisabled={isInferenceDisabled()} />;
+  /**
+   * The upload ceiling is resolved HERE and handed down, for the same reason
+   * `inferenceDisabled` is: a client component cannot read server-only
+   * configuration, and the alternative — a `NEXT_PUBLIC_MAX_DOCUMENT_SIZE_MB` —
+   * would publish configuration to every visitor to save passing one number.
+   *
+   * Without this the browser would keep refusing at its compiled-in default
+   * while the server happily accepted larger files, which is the confusing
+   * half of a drifted limit rather than the dangerous half.
+   */
+  return (
+    <Chat inferenceDisabled={isInferenceDisabled()} maxUploadBytes={getMaxUploadBytes()} />
+  );
 }

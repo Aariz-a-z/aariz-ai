@@ -36,6 +36,11 @@
 
 import { inflateRawSync } from 'node:zlib';
 
+import {
+  MAX_EXTRACTED_CHARS,
+  MAX_INFLATED_BYTES as SHARED_MAX_INFLATED_BYTES,
+} from '../limits.ts';
+
 /**
  * Ceiling on rendered text from one file.
  *
@@ -45,10 +50,10 @@ import { inflateRawSync } from 'node:zlib';
  * cost. Truncation is announced in the text rather than done silently, so a
  * user asking about the tail of a huge sheet finds out why it is missing.
  */
-const MAX_RENDERED_CHARS = 2_000_000;
+const MAX_RENDERED_CHARS = MAX_EXTRACTED_CHARS;
 
 /** Total bytes a single archive may inflate to. Bounds a zip bomb. */
-const MAX_INFLATED_BYTES = 64 * 1024 * 1024;
+const MAX_INFLATED_BYTES = SHARED_MAX_INFLATED_BYTES;
 
 export class StructuredParseError extends Error {
   constructor(message: string) {

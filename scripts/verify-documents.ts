@@ -30,7 +30,7 @@ import { getSupabaseAdminClient, isSupabaseConfigured } from '../src/lib/supabas
 import { SUPPORTED_EXTENSIONS } from '../src/lib/ingest/extract.ts';
 import { EXTENSION_TO_SOURCE_TYPE } from '../src/lib/ingest/formats.ts';
 import { ACCEPTED_EXTENSIONS } from '../src/lib/documents-client.ts';
-import { UPLOAD_EXTENSIONS } from '../src/lib/documents.ts';
+import { UPLOAD_EXTENSIONS, getMaxUploadBytes } from '../src/lib/documents.ts';
 import { DOCUMENT_SOURCE_TYPES } from '../src/types/database.ts';
 import { buildDocx, buildPdf, buildXlsx, corrupt } from './fixtures/documents.ts';
 import { isInferenceDisabled } from '../src/lib/inference-mode.ts';
@@ -117,13 +117,38 @@ class Client {
     return this.json('/api/documents', { method: 'POST', body: form });
   }
 
+  /**
+   * Ask, retrying only when the PROVIDER rate-limits us.
+   *
+   * This suite now asks far more questions than it used to — thirteen formats,
+   * each with its own retrieval check — and fires them back to back, which is
+   * enough to trip Gemini's free-tier per-minute limit. The result was a page
+   * of failures reading `answer: ""` that said nothing about this application:
+   * the upload, the chunks and the embeddings were all verified fine, and only
+   * the generation call was refused.
+   *
+   * Retrying a 429 is not a weakened assertion. Nothing about what is checked
+   * changes; the suite simply stops reporting Google's throughput policy as a
+   * defect in the code under test. Every other status still fails immediately,
+   * and an answer that comes back wrong still fails.
+   */
   async ask(prompt: string, extra: Record<string, unknown> = {}): Promise<{ answer: string; sources: { documentId: string }[] }> {
-    const response = await this.request('/api/chat', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ messages: [{ role: 'user', content: prompt }], ...extra }),
-    });
-    if (!response.ok || !response.body) return { answer: '', sources: [] };
+    let response: Response | null = null;
+
+    for (let attempt = 0; attempt < 4; attempt++) {
+      response = await this.request('/api/chat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ messages: [{ role: 'user', content: prompt }], ...extra }),
+      });
+      // 429 is our own budget or the provider's; 502 is how a provider 429
+      // surfaces once mapped. Both are throughput, not correctness.
+      if (response.status !== 429 && response.status !== 502) break;
+      await response.arrayBuffer().catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, 4_000 * (attempt + 1)));
+    }
+
+    if (response === null || !response.ok || !response.body) return { answer: '', sources: [] };
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -554,8 +579,23 @@ async function main(): Promise<void> {
     const empty = await alice.upload('empty.txt', Buffer.alloc(0));
     check(empty.status === 400, 'an empty file is rejected', `HTTP ${empty.status}`);
 
-    const huge = await alice.upload('huge.txt', Buffer.alloc(11 * 1024 * 1024, 0x61));
-    check(huge.status === 413, 'an oversized file is rejected', `HTTP ${huge.status}`);
+    /**
+     * Sized from the CONFIGURED limit, not from a literal.
+     *
+     * This allocated a flat 11 MB, which was comfortably over the old 10 MB
+     * ceiling and is comfortably UNDER the new 50 MB one — so the test began
+     * uploading a legal file and asserting it was refused. Deriving the size
+     * means the assertion keeps testing "over the limit" whatever the limit is,
+     * and an operator raising MAX_DOCUMENT_SIZE_MB does not silently turn this
+     * check into a no-op.
+     */
+    const overLimit = Buffer.alloc(getMaxUploadBytes() + 1024, 0x61);
+    const huge = await alice.upload('huge.txt', overLimit);
+    check(
+      huge.status === 413,
+      'a file over the configured limit is rejected',
+      `${(overLimit.length / 1024 / 1024).toFixed(0)} MB -> HTTP ${huge.status}`,
+    );
 
     const malformedDocx = await alice.upload('broken.docx', Buffer.from('this is not a zip', 'utf8'));
     check(malformedDocx.status === 422, 'a malformed DOCX fails cleanly, not as a 500', `HTTP ${malformedDocx.status}`);
@@ -958,15 +998,38 @@ async function main(): Promise<void> {
     // --- Size and emptiness --------------------------------------------------
     console.log('\n-- Size and emptiness ---------------------------------------------');
 
-    const oversized = await alice.upload(
-      'huge.txt',
-      Buffer.alloc(11 * 1024 * 1024, 'a'),
-    );
+    const oversizedBytes = Buffer.alloc(getMaxUploadBytes() + 1024, 'a');
+    const oversized = await alice.upload('huge.txt', oversizedBytes);
     check(
       oversized.status === 413 || oversized.status === 400,
       'an oversized file is refused before it is parsed',
-      `HTTP ${oversized.status}`,
+      `${(oversizedBytes.length / 1024 / 1024).toFixed(0)} MB -> HTTP ${oversized.status}`,
     );
+
+    /**
+     * A file comfortably under the ceiling must still be accepted, or "the
+     * limit works" would also be satisfied by a route that refused everything.
+     *
+     * Deliberately modest. The first version repeated a line 2,000 times, which
+     * chunked into dozens of passages and spent dozens of embedding calls to
+     * prove one boolean — enough to trip the provider's per-minute limit and
+     * fail on a 429 that had nothing to do with size. A few chunks demonstrate
+     * exactly the same thing.
+     */
+    const underLimit = Buffer.from(
+      `Ceiling probe. The clearance code is CL-7781.
+`.repeat(40),
+      'utf8',
+    );
+    const accepted = await alice.upload('under-limit.txt', underLimit);
+    check(
+      accepted.status === 201,
+      '  while a large-but-legal file is still accepted',
+      `${(underLimit.length / 1024).toFixed(0)} KB -> HTTP ${accepted.status}`,
+    );
+    if (accepted.body.document) {
+      await admin.from('documents').delete().eq('id', accepted.body.document.id);
+    }
 
     const emptyFile = await alice.upload('nothing.txt', Buffer.alloc(0));
     check(

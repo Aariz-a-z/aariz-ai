@@ -35,6 +35,8 @@
  * is `legacy-office.ts`'s job.
  */
 
+import { MAX_INFLATED_BYTES } from '../limits.ts';
+
 const SIGNATURE = 'd0cf11e0a1b11ae1';
 
 /** Sector chain terminators. */
@@ -44,8 +46,16 @@ const FREESECT = 0xffffffff;
 /** Sectors a single chain may span before the file is treated as malformed. */
 const MAX_CHAIN = 1_000_000;
 
-/** Total bytes all extracted streams may occupy. */
-const MAX_TOTAL_BYTES = 64 * 1024 * 1024;
+/**
+ * Total bytes all extracted streams may occupy.
+ *
+ * Shared with the ZIP reader rather than declared here. It was a local
+ * `64 * 1024 * 1024`, which was comfortably above the old 10 MB upload ceiling
+ * and would have become the BINDING limit if an operator raised
+ * MAX_DOCUMENT_SIZE_MB past it — a 100 MB `.doc` failing on a number nobody
+ * would have thought to look at. One ceiling, one place.
+ */
+const MAX_TOTAL_BYTES = MAX_INFLATED_BYTES;
 
 export class CfbError extends Error {
   constructor(message: string) {
