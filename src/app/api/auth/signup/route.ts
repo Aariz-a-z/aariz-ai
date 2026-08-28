@@ -15,6 +15,37 @@ import { log, newRequestId } from '@/lib/log';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+/**
+ * Absolute URL the confirmation email should return the user to.
+ *
+ * Derived from the SERVER's view of its own request URL, not from a header a
+ * caller supplies — the same source `enforceSameOrigin` trusts, and for the
+ * same reason: a value taken from `Origin` or `x-forwarded-host` would let a
+ * caller decide where a confirmation email points.
+ *
+ * `SITE_URL` overrides it, for a deployment sitting behind a proxy whose
+ * rewritten request URL does not match the address people actually visit.
+ *
+ * Returns undefined rather than a guess when neither is usable, in which case
+ * Supabase falls back to its Site URL exactly as before.
+ */
+function confirmationUrl(request: Request): string | undefined {
+  const configured = process.env.SITE_URL?.trim();
+  if (configured) {
+    try {
+      return new URL('/auth/confirm', configured).toString();
+    } catch {
+      // A malformed SITE_URL should not take signup down; fall through.
+    }
+  }
+
+  try {
+    return new URL('/auth/confirm', new URL(request.url).origin).toString();
+  } catch {
+    return undefined;
+  }
+}
+
 export async function POST(request: Request): Promise<Response> {
   // Level 16: a request announcing a foreign origin is refused here rather than
   // merely ignored by the browser. Checked first — it is the cheapest rejection
@@ -44,7 +75,7 @@ export async function POST(request: Request): Promise<Response> {
   const { email, password } = (payload ?? {}) as { email?: unknown; password?: unknown };
 
   try {
-    const { session, needsConfirmation } = await signUp(email, password);
+    const { session, needsConfirmation } = await signUp(email, password, confirmationUrl(request));
 
     if (session === null) {
       // The project requires email confirmation. Saying so plainly beats

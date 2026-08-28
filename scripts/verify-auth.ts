@@ -706,6 +706,7 @@ async function main(): Promise<void> {
   }
 
   verifyConfirmationDialog();
+  await verifyConfirmationLanding();
 
   summary();
 }
@@ -781,6 +782,89 @@ function verifyConfirmationDialog(): void {
       !panel.includes(forbidden),
       `  the quota path never self-confirms an account (no ${forbidden})`,
     );
+  }
+}
+
+/**
+ * Where a confirmation link lands.
+ *
+ * Clicking "confirm your email" used to end at "This site can't be reached —
+ * localhost refused to connect", for every user. The account was created and
+ * the address really was confirmed, because Supabase verifies the token on its
+ * own servers before redirecting; only the final hop had nowhere to go.
+ *
+ * Both halves are checked. The page must exist and must distinguish success
+ * from an expired link — a page that cheerfully says "verified successfully"
+ * for a dead link is worse than the error it replaced — and the signup route
+ * must actually ask Supabase to send people to it.
+ */
+async function verifyConfirmationLanding(): Promise<void> {
+  console.log("\n-- Where the confirmation link lands --------------------------------");
+
+  const cases: { query: string; expect: RegExp; label: string }[] = [
+    { query: '', expect: /Email verified successfully/i, label: 'a clean confirmation reports success' },
+    {
+      query: '?error=access_denied&error_code=otp_expired',
+      expect: /link has expired/i,
+      label: 'an expired link says so, rather than claiming success',
+    },
+    {
+      query: '?error=server_error',
+      expect: /could not be used/i,
+      label: 'an unrecognised failure is still reported as a failure',
+    },
+  ];
+
+  for (const testCase of cases) {
+    const response = await fetch(`${BASE_URL}/auth/confirm${testCase.query}`, {
+      signal: AbortSignal.timeout(15_000),
+    });
+    const html = await response.text();
+    check(response.status === 200, `${testCase.label} (HTTP ${response.status})`);
+    check(testCase.expect.test(html), `  and the page says so`, testCase.expect.source);
+    // The one failure mode that matters most: never claim success on an error.
+    if (testCase.query.length > 0) {
+      check(
+        !/Email verified successfully/i.test(html),
+        `  and never claims success for a failed link`,
+      );
+    }
+  }
+
+  /**
+   * The link Supabase would actually put in the email.
+   *
+   * `generateLink` returns the action link without sending mail, so this proves
+   * the redirect target end to end without spending the project's email quota
+   * — and without which the page above could be perfect and unreachable.
+   */
+  const admin = getSupabaseAdminClient();
+  const probeEmail = `confirm-redirect-${Date.now()}@example.test`;
+  const { data, error } = await admin.auth.admin.generateLink({
+    type: 'signup',
+    email: probeEmail,
+    password: `Probe-${Date.now()}-Aa1!`,
+    options: { redirectTo: `${BASE_URL}/auth/confirm` },
+  });
+
+  if (error || !data.properties?.action_link) {
+    block('the confirmation link could not be generated', error?.message ?? '');
+    return;
+  }
+
+  try {
+    const redirectTo = new URL(data.properties.action_link).searchParams.get('redirect_to') ?? '';
+    check(
+      redirectTo.endsWith('/auth/confirm'),
+      'the emailed link returns the user to the confirmation page',
+      redirectTo,
+    );
+    check(
+      redirectTo !== BASE_URL && redirectTo !== `${BASE_URL}/`,
+      '  and not to the bare site root, which is what produced the dead page',
+    );
+  } finally {
+    if (data.user) await admin.auth.admin.deleteUser(data.user.id);
   }
 }
 

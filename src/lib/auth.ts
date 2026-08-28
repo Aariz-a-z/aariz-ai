@@ -181,12 +181,33 @@ function requireConfigured(): void {
 export async function signUp(
   email: unknown,
   password: unknown,
+  /**
+   * Absolute URL the confirmation link should return the user to.
+   *
+   * Passing nothing here was the bug behind "This site can't be reached —
+   * localhost refused to connect" after clicking Confirm. With no
+   * `emailRedirectTo`, Supabase falls back to the project's Site URL, whose
+   * default is `http://localhost:3000` — an address that resolves to the
+   * READER's own machine, where nothing is listening.
+   *
+   * The route supplies this from the server's own view of the request origin,
+   * so a local developer gets a localhost link and a deployed instance gets its
+   * real one, with no environment variable to forget.
+   *
+   * Supabase independently refuses any value not on its Redirect URLs
+   * allow-list and silently falls back to the Site URL, so this cannot be used
+   * to point a confirmation email anywhere arbitrary.
+   */
+  redirectTo?: string,
 ): Promise<{ session: AuthSession | null; needsConfirmation: boolean }> {
   assertServerOnly();
   requireConfigured();
 
   const credentials = validateCredentials(email, password);
-  const { data, error } = await createAnonClient().auth.signUp(credentials);
+  const { data, error } = await createAnonClient().auth.signUp({
+    ...credentials,
+    ...(redirectTo ? { options: { emailRedirectTo: redirectTo } } : {}),
+  });
 
   if (error) throw new AuthError('rejected', error.message, 400);
 
